@@ -1,0 +1,124 @@
+-- ✅ GUI Setup
+local gui = Instance.new("ScreenGui", game.CoreGui)
+gui.Name = "GateJoiner"
+
+local button = Instance.new("TextButton")
+button.Size = UDim2.new(0, 200, 0, 45)
+button.Position = UDim2.new(0, 20, 0, 170)
+button.Text = "🚪 Stop Auto Join BlueGate"
+button.BackgroundColor3 = Color3.fromRGB(0, 120, 255)
+button.TextColor3 = Color3.fromRGB(255, 255, 255)
+button.Font = Enum.Font.GothamBold
+button.TextSize = 14
+button.Draggable = true
+button.Active = true
+button.BorderSizePixel = 0
+button.Parent = gui
+
+local uistroke = Instance.new("UIStroke", button)
+uistroke.Color = Color3.fromRGB(0, 170, 255)
+uistroke.Thickness = 2
+uistroke.Transparency = 0.25
+
+local player = game.Players.LocalPlayer
+local running = true -- Aktif langsung
+
+-- 🚁 Stabilizer (Cegah Jatuh)
+local function applyStabilizer()
+	local char = player.Character
+	if not char then return end
+	local hrp = char:FindFirstChild("HumanoidRootPart")
+	if not hrp then return end
+
+	local gyro = Instance.new("BodyGyro")
+	gyro.P = 4000
+	gyro.D = 100
+	gyro.MaxTorque = Vector3.new(400000, 400000, 400000)
+	gyro.CFrame = hrp.CFrame
+	gyro.Parent = hrp
+
+	local bv = Instance.new("BodyVelocity")
+	bv.Velocity = Vector3.new(0, 0, 0)
+	bv.MaxForce = Vector3.new(100000, 100000, 100000)
+	bv.Parent = hrp
+
+	game.Debris:AddItem(gyro, 5)
+	game.Debris:AddItem(bv, 5)
+end
+
+-- ✈️ Safe Teleport 2-Langkah (naik → turun)
+local function safeTeleport(targetCFrame)
+	local TweenService = game:GetService("TweenService")
+	local char = player.Character or player.CharacterAdded:Wait()
+	local hrp = char:WaitForChild("HumanoidRootPart")
+
+	local tweenTime = 2.8
+	local liftHeight = 60
+
+	-- ⬆️ Naik dulu ke atas pulau
+	local upTween = TweenService:Create(hrp, TweenInfo.new(tweenTime, Enum.EasingStyle.Sine, Enum.EasingDirection.Out), {
+		CFrame = hrp.CFrame + Vector3.new(0, liftHeight, 0)
+	})
+	upTween:Play()
+	upTween.Completed:Wait()
+
+	-- ⬇️ Lalu turun ke Gate posisi
+	local downTween = TweenService:Create(hrp, TweenInfo.new(tweenTime, Enum.EasingStyle.Sine, Enum.EasingDirection.Out), {
+		CFrame = targetCFrame + Vector3.new(0, 5, 0)
+	})
+	downTween:Play()
+	downTween.Completed:Wait()
+
+	-- 🔄 Stabilizer untuk mengunci posisi
+	applyStabilizer()
+
+	task.wait(0.3)
+	pcall(function()
+		local hum = char:FindFirstChildOfClass("Humanoid")
+		if hum then
+			hum:ChangeState(Enum.HumanoidStateType.Seated)
+			task.wait(0.2)
+			hum:ChangeState(Enum.HumanoidStateType.GettingUp)
+		end
+	end)
+end
+
+-- 🔁 Auto Join Gate Loop
+local function autoJoinLoop()
+	while true do
+		if running then
+			local gates = workspace:FindFirstChild("Gates")
+			if gates then
+				local blueGate = gates:FindFirstChild("BlueGate")
+				if blueGate and blueGate:FindFirstChild("Gate") then
+					local gatePart = blueGate.Gate
+					local join = gatePart:FindFirstChild("JoinParty")
+					local ready = gatePart:FindFirstChild("ReadyTag")
+
+					safeTeleport(gatePart.CFrame)
+					task.wait(0.8)
+
+					if join then join:FireServer() end
+					task.wait(0.8)
+					if ready then ready:FireServer() end
+				end
+			end
+		end
+		task.wait(10) -- ⏳ Delay antar loop
+	end
+end
+
+-- ▶️ Mulai loop saat dijalankan
+task.spawn(autoJoinLoop)
+
+-- 🖱️ Toggle ON/OFF via tombol
+button.MouseButton1Click:Connect(function()
+	running = not running
+	if running then
+		button.Text = "🚪 Stop Auto Join BlueGate"
+		button.BackgroundColor3 = Color3.fromRGB(0, 120, 255)
+	else
+		button.Text = "▶️ Start Auto Join BlueGate"
+		button.BackgroundColor3 = Color3.fromRGB(40, 40, 40)
+	end
+end)
