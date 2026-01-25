@@ -1,0 +1,141 @@
+-- 📦 GUI
+local gui = Instance.new("ScreenGui", game.CoreGui)
+gui.Name = "MiningAll"
+
+local toggle = Instance.new("TextButton")
+toggle.Size = UDim2.new(0, 160, 0, 40)
+toggle.Position = UDim2.new(0, 20, 0, 100)
+toggle.Text = "⛏️ Stop Auto Mine"
+toggle.BackgroundColor3 = Color3.fromRGB(170, 60, 60)
+toggle.TextColor3 = Color3.fromRGB(255, 255, 255)
+toggle.Font = Enum.Font.GothamBold
+toggle.TextSize = 14
+toggle.Draggable = true
+toggle.Active = true
+toggle.Parent = gui
+
+local player = game.Players.LocalPlayer
+local RunService = game:GetService("RunService")
+local TeleportService = game:GetService("TeleportService")
+local miningEnabled = true
+local worldPlaceId = 2270890905
+
+-- 🛑 Noclip saat mining
+RunService.Stepped:Connect(function()
+	if miningEnabled then
+		local char = player.Character
+		if char then
+			for _, part in pairs(char:GetDescendants()) do
+				if part:IsA("BasePart") and part.CanCollide then
+					part.CanCollide = false
+				end
+			end
+		end
+	end
+end)
+
+-- 🔪 Pickaxe Swing
+local function swingPickaxe(char)
+	local pickaxe = char:FindFirstChild("PickAxe")
+	local swordScript = pickaxe and pickaxe:FindFirstChild("SwordScript")
+	if swordScript then
+		swordScript.Activate:FireServer()
+	end
+end
+
+-- 🔥 Trigger Crystal
+local function fireCrystal(oreModel)
+	local trigger = player:FindFirstChild("PlayerGui")
+		and player.PlayerGui:FindFirstChild("ItemUIs")
+		and player.PlayerGui.ItemUIs:FindFirstChild("Ado")
+		and player.PlayerGui.ItemUIs.Ado:FindFirstChild("trigger")
+	if trigger then
+		trigger:FireServer(oreModel)
+	else
+		warn("❌ Trigger tidak ditemukan!")
+	end
+end
+
+-- ⛔ Matikan Speed
+local function forceSpeedFalse()
+	pcall(function()
+		player.PlayerGui.Parkour.Script.UpdateSpeed:FireServer(false)
+	end)
+end
+
+-- 🔍 Cari Crystal/Chunk Terdekat (lebih fleksibel)
+local function getNearestOre(hrp)
+	local nearest, minDist = nil, math.huge
+	local ores = workspace:FindFirstChild("Ores")
+	if not ores then
+		warn("❌ Folder Ores tidak ditemukan!")
+		return nil
+	end
+
+	for _, v in pairs(ores:GetChildren()) do
+		local name = string.lower(v.Name)
+		if name:find("crystal") or name:find("chunk") then
+			local part = v:FindFirstChildWhichIsA("BasePart", true)
+			if part then
+				local dist = (hrp.Position - part.Position).Magnitude
+				if dist < minDist then
+					nearest = v
+					minDist = dist
+				end
+			end
+		end
+	end
+
+	if nearest then
+		print("✅ Crystal/Chunk ditemukan:", nearest.Name)
+	else
+		print("🔍 Tidak ada Crystal/Chunk ditemukan.")
+	end
+
+	return nearest
+end
+
+-- 🖱️ Tombol Toggle
+toggle.MouseButton1Click:Connect(function()
+	miningEnabled = not miningEnabled
+	toggle.Text = miningEnabled and "⛔ Stop Mining" or "⛏️ Start Auto Mine"
+	toggle.BackgroundColor3 = miningEnabled and Color3.fromRGB(170, 60, 60) or Color3.fromRGB(40, 40, 40)
+end)
+
+-- ♻️ Loop Auto Mining
+task.spawn(function()
+	while true do
+		if miningEnabled then
+			forceSpeedFalse()
+			local char = player.Character or player.CharacterAdded:Wait()
+			local hrp = char:WaitForChild("HumanoidRootPart")
+
+			local ore = getNearestOre(hrp)
+
+			if ore then
+				local part = ore:IsA("BasePart") and ore or ore:FindFirstChildWhichIsA("BasePart", true)
+				if part then
+					hrp.CFrame = part.CFrame + Vector3.new(0, 2.5, 0)
+					task.wait(0.1)
+
+					while ore and ore:IsDescendantOf(workspace) and miningEnabled do
+						fireCrystal(ore)
+						swingPickaxe(char)
+						task.wait(0.08)
+					end
+				end
+			else
+				miningEnabled = false
+				toggle.Text = "⛏️ Start Auto Mine"
+				toggle.BackgroundColor3 = Color3.fromRGB(40, 40, 40)
+				warn("🌀 Crystal tidak ditemukan, teleport ulang...")
+
+				task.wait(2)
+				pcall(function()
+					TeleportService:Teleport(worldPlaceId, player)
+				end)
+			end
+		end
+		task.wait(0.5)
+	end
+end)
