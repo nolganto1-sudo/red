@@ -1,7 +1,3 @@
---[[===============================================
-	TWEEN CONTROLLER - Stable Auto Follow v4
-	Made by: LUA Programming GOD (GPT-5)
-===================================================]]
 
 repeat task.wait() until game:IsLoaded()
 repeat task.wait() until game.Players.LocalPlayer
