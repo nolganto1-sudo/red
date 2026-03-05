@@ -1,0 +1,273 @@
+-- Dropped Items ESP (Name + White Dot + Distance + Auto Update)
+
+local Players = game:GetService("Players")
+local UserInputService = game:GetService("UserInputService")
+local RunService = game:GetService("RunService")
+
+local player = Players.LocalPlayer
+local droppedFolder = workspace:WaitForChild("DroppedItems")
+
+local character = player.Character or player.CharacterAdded:Wait()
+local hrp = character:WaitForChild("HumanoidRootPart")
+
+player.CharacterAdded:Connect(function(char)
+	character = char
+	hrp = char:WaitForChild("HumanoidRootPart")
+end)
+
+-- STATE
+local SelectedItems = {}
+local SystemEnabled = false
+local ActiveESP = {}
+local ItemButtons = {}
+
+--================ GUI =================--
+
+local gui = Instance.new("ScreenGui")
+gui.ResetOnSpawn = false
+gui.Parent = player:WaitForChild("PlayerGui")
+
+local main = Instance.new("Frame", gui)
+main.Size = UDim2.new(0, 260, 0, 420)
+main.Position = UDim2.new(0.05, 0, 0.1, 0)
+main.BackgroundColor3 = Color3.fromRGB(25,25,25)
+main.Active = true
+Instance.new("UICorner", main)
+
+-- Drag
+local dragging, dragStart, startPos
+main.InputBegan:Connect(function(input)
+	if input.UserInputType == Enum.UserInputType.MouseButton1
+	or input.UserInputType == Enum.UserInputType.Touch then
+		dragging = true
+		dragStart = input.Position
+		startPos = main.Position
+		input.Changed:Connect(function()
+			if input.UserInputState == Enum.UserInputState.End then
+				dragging = false
+			end
+		end)
+	end
+end)
+
+UserInputService.InputChanged:Connect(function(input)
+	if dragging then
+		local delta = input.Position - dragStart
+		main.Position = UDim2.new(
+			startPos.X.Scale, startPos.X.Offset + delta.X,
+			startPos.Y.Scale, startPos.Y.Offset + delta.Y
+		)
+	end
+end)
+
+-- Title
+local title = Instance.new("TextLabel", main)
+title.Size = UDim2.new(1,0,0,35)
+title.BackgroundTransparency = 1
+title.Text = "Dropped Items ESP"
+title.TextScaled = true
+title.TextColor3 = Color3.new(1,1,1)
+
+-- Toggle
+local toggle = Instance.new("TextButton", main)
+toggle.Size = UDim2.new(1,-10,0,35)
+toggle.Position = UDim2.new(0,5,0,40)
+toggle.Text = "ESP: OFF"
+toggle.BackgroundColor3 = Color3.fromRGB(150,0,0)
+toggle.TextScaled = true
+toggle.TextColor3 = Color3.new(1,1,1)
+Instance.new("UICorner", toggle)
+
+-- Scroll
+local scroll = Instance.new("ScrollingFrame", main)
+scroll.Size = UDim2.new(1,-10,1,-90)
+scroll.Position = UDim2.new(0,5,0,80)
+scroll.CanvasSize = UDim2.new(0,0,0,0)
+scroll.ScrollBarThickness = 6
+scroll.BackgroundTransparency = 1
+
+local layout = Instance.new("UIListLayout", scroll)
+layout.Padding = UDim.new(0,5)
+layout:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(function()
+	scroll.CanvasSize = UDim2.new(0,0,0,layout.AbsoluteContentSize.Y + 5)
+end)
+
+--================ ESP =================--
+
+local function getMainPart(obj)
+	if obj:IsA("BasePart") then
+		return obj
+	end
+	if obj:IsA("Model") then
+		if obj.PrimaryPart then
+			return obj.PrimaryPart
+		end
+		for _,v in ipairs(obj:GetDescendants()) do
+			if v:IsA("BasePart") then
+				return v
+			end
+		end
+	end
+	return nil
+end
+
+local function removeESP(obj)
+	if ActiveESP[obj] then
+		if ActiveESP[obj].conn then
+			ActiveESP[obj].conn:Disconnect()
+		end
+		for _,v in ipairs(ActiveESP[obj].objs) do
+			v:Destroy()
+		end
+		ActiveESP[obj] = nil
+	end
+end
+
+local function addESP(obj)
+	if ActiveESP[obj] or not SystemEnabled then return end
+	local mainPart = getMainPart(obj)
+	if not mainPart then return end
+
+	local objects = {}
+
+	-- Highlight
+	local highlight = Instance.new("Highlight")
+	highlight.FillColor = Color3.fromRGB(255,200,0)
+	highlight.OutlineColor = Color3.new(1,1,1)
+	highlight.FillTransparency = 0.4
+	highlight.Parent = obj
+	table.insert(objects, highlight)
+
+	-- Billboard
+	local billboard = Instance.new("BillboardGui")
+	billboard.Size = UDim2.new(0,140,0,45)
+	billboard.StudsOffset = Vector3.new(0,2.5,0)
+	billboard.AlwaysOnTop = true
+	billboard.Parent = mainPart
+	table.insert(objects, billboard)
+
+	-- White Dot
+	local dot = Instance.new("Frame")
+	dot.Size = UDim2.new(0,8,0,8)
+	dot.Position = UDim2.new(0.5,-4,0,0)
+	dot.BackgroundColor3 = Color3.new(1,1,1)
+	dot.BorderSizePixel = 0
+	dot.Parent = billboard
+	Instance.new("UICorner", dot).CornerRadius = UDim.new(1,0)
+
+	-- Name + Distance
+	local label = Instance.new("TextLabel")
+	label.Size = UDim2.new(1,0,0,22)
+	label.Position = UDim2.new(0,0,0,12)
+	label.BackgroundTransparency = 1
+	label.TextColor3 = Color3.new(1,1,1)
+	label.TextStrokeTransparency = 0
+	label.TextScaled = true
+	label.Font = Enum.Font.GothamBold
+	label.Parent = billboard
+
+	-- Distance updater (ringan)
+	local conn
+	conn = RunService.Heartbeat:Connect(function()
+		if not hrp or not mainPart or not mainPart.Parent then
+			if conn then conn:Disconnect() end
+			return
+		end
+		local dist = (hrp.Position - mainPart.Position).Magnitude
+		label.Text = string.format("%s - %dm", obj.Name, math.floor(dist))
+	end)
+
+	ActiveESP[obj] = {
+		objs = objects,
+		conn = conn
+	}
+end
+
+--================ LIST SYSTEM =================--
+
+local function createButton(name)
+	if ItemButtons[name] then return end
+
+	local btn = Instance.new("TextButton")
+	btn.Size = UDim2.new(1,0,0,35)
+	btn.Text = "[ ] "..name
+	btn.BackgroundColor3 = Color3.fromRGB(40,40,40)
+	btn.TextColor3 = Color3.new(1,1,1)
+	btn.TextScaled = true
+	btn.Parent = scroll
+	Instance.new("UICorner", btn)
+
+	btn.MouseButton1Click:Connect(function()
+		SelectedItems[name] = not SelectedItems[name]
+		if SelectedItems[name] then
+			btn.Text = "[✓] "..name
+			btn.BackgroundColor3 = Color3.fromRGB(0,120,0)
+			for _,obj in ipairs(droppedFolder:GetChildren()) do
+				if obj.Name == name then
+					addESP(obj)
+				end
+			end
+		else
+			btn.Text = "[ ] "..name
+			btn.BackgroundColor3 = Color3.fromRGB(40,40,40)
+			for obj,_ in pairs(ActiveESP) do
+				if obj.Name == name then
+					removeESP(obj)
+				end
+			end
+		end
+	end)
+
+	ItemButtons[name] = btn
+end
+
+local function removeButton(name)
+	if ItemButtons[name] then
+		ItemButtons[name]:Destroy()
+		ItemButtons[name] = nil
+		SelectedItems[name] = nil
+	end
+end
+
+-- Initial
+for _,obj in ipairs(droppedFolder:GetChildren()) do
+	createButton(obj.Name)
+end
+
+-- Auto update folder
+droppedFolder.ChildAdded:Connect(function(obj)
+	createButton(obj.Name)
+	if SelectedItems[obj.Name] then
+		addESP(obj)
+	end
+end)
+
+droppedFolder.ChildRemoved:Connect(function(obj)
+	removeESP(obj)
+	local stillExists = false
+	for _,v in ipairs(droppedFolder:GetChildren()) do
+		if v.Name == obj.Name then
+			stillExists = true
+			break
+		end
+	end
+	if not stillExists then
+		removeButton(obj.Name)
+	end
+end)
+
+toggle.MouseButton1Click:Connect(function()
+	SystemEnabled = not SystemEnabled
+	if SystemEnabled then
+		toggle.Text = "ESP: ON"
+		toggle.BackgroundColor3 = Color3.fromRGB(0,150,0)
+	else
+		toggle.Text = "ESP: OFF"
+		toggle.BackgroundColor3 = Color3.fromRGB(150,0,0)
+		for obj,_ in pairs(ActiveESP) do
+			removeESP(obj)
+		end
+	end
+end)
+
+print("Dropped Items ESP Loaded (Name + Distance)")
