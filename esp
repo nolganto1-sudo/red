@@ -1,0 +1,257 @@
+-- Developer Loot ESP Tool (All-in-One + Distance)
+-- LocalScript
+
+local Players = game:GetService("Players")
+local UserInputService = game:GetService("UserInputService")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local RunService = game:GetService("RunService")
+
+local player = Players.LocalPlayer
+local lootFolder = ReplicatedStorage:WaitForChild("LootContainers")
+
+local character = player.Character or player.CharacterAdded:Wait()
+local hrp = character:WaitForChild("HumanoidRootPart")
+
+player.CharacterAdded:Connect(function(char)
+	character = char
+	hrp = char:WaitForChild("HumanoidRootPart")
+end)
+
+-- STATE
+local SelectedLoot = {}
+local SystemEnabled = false
+local ActiveESP = {} -- [model] = {objs = {}, conn = RBXScriptConnection}
+
+--========================
+-- GUI SETUP
+--========================
+
+local gui = Instance.new("ScreenGui")
+gui.Name = "LootDebugGui"
+gui.ResetOnSpawn = false
+gui.Parent = player:WaitForChild("PlayerGui")
+
+local main = Instance.new("Frame", gui)
+main.Size = UDim2.new(0, 260, 0, 420)
+main.Position = UDim2.new(0.05, 0, 0.1, 0)
+main.BackgroundColor3 = Color3.fromRGB(25,25,25)
+main.Active = true
+main.BorderSizePixel = 0
+Instance.new("UICorner", main)
+
+-- Drag
+local dragging, dragInput, dragStart, startPos
+local function update(input)
+	local delta = input.Position - dragStart
+	main.Position = UDim2.new(
+		startPos.X.Scale, startPos.X.Offset + delta.X,
+		startPos.Y.Scale, startPos.Y.Offset + delta.Y
+	)
+end
+
+main.InputBegan:Connect(function(input)
+	if input.UserInputType == Enum.UserInputType.MouseButton1
+	or input.UserInputType == Enum.UserInputType.Touch then
+		dragging = true
+		dragStart = input.Position
+		startPos = main.Position
+		input.Changed:Connect(function()
+			if input.UserInputState == Enum.UserInputState.End then
+				dragging = false
+			end
+		end)
+	end
+end)
+
+main.InputChanged:Connect(function(input)
+	if input.UserInputType == Enum.UserInputType.MouseMovement
+	or input.UserInputType == Enum.UserInputType.Touch then
+		dragInput = input
+	end
+end)
+
+UserInputService.InputChanged:Connect(function(input)
+	if input == dragInput and dragging then
+		update(input)
+	end
+end)
+
+-- Title
+local title = Instance.new("TextLabel", main)
+title.Size = UDim2.new(1,0,0,35)
+title.BackgroundTransparency = 1
+title.Text = "Loot Debug ESP"
+title.TextScaled = true
+title.TextColor3 = Color3.new(1,1,1)
+
+-- Toggle Button
+local toggle = Instance.new("TextButton", main)
+toggle.Size = UDim2.new(1,-10,0,35)
+toggle.Position = UDim2.new(0,5,0,40)
+toggle.Text = "ESP: OFF"
+toggle.BackgroundColor3 = Color3.fromRGB(150,0,0)
+toggle.TextColor3 = Color3.new(1,1,1)
+toggle.TextScaled = true
+Instance.new("UICorner", toggle)
+
+-- Scroll
+local scroll = Instance.new("ScrollingFrame", main)
+scroll.Size = UDim2.new(1,-10,1,-90)
+scroll.Position = UDim2.new(0,5,0,80)
+scroll.CanvasSize = UDim2.new(0,0,0,0)
+scroll.ScrollBarThickness = 6
+scroll.BackgroundTransparency = 1
+
+local layout = Instance.new("UIListLayout", scroll)
+layout.Padding = UDim.new(0,5)
+layout:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(function()
+	scroll.CanvasSize = UDim2.new(0,0,0,layout.AbsoluteContentSize.Y + 5)
+end)
+
+--========================
+-- ESP LOGIC
+--========================
+
+local function getMainPart(model)
+	if model.PrimaryPart then
+		return model.PrimaryPart
+	end
+	for _, v in ipairs(model:GetDescendants()) do
+		if v:IsA("BasePart") then
+			return v
+		end
+	end
+	return nil
+end
+
+local function removeESP(model)
+	if ActiveESP[model] then
+		if ActiveESP[model].conn then
+			ActiveESP[model].conn:Disconnect()
+		end
+		for _, obj in ipairs(ActiveESP[model].objs) do
+			if obj and obj.Destroy then
+				obj:Destroy()
+			end
+		end
+		ActiveESP[model] = nil
+	end
+end
+
+local function addESP(model)
+	if ActiveESP[model] then return end
+	local mainPart = getMainPart(model)
+	if not mainPart then return end
+
+	local objects = {}
+
+	-- Highlight
+	local highlight = Instance.new("Highlight")
+	highlight.FillColor = Color3.fromRGB(0,255,100)
+	highlight.OutlineColor = Color3.new(1,1,1)
+	highlight.FillTransparency = 0.4
+	highlight.Parent = model
+	table.insert(objects, highlight)
+
+	-- Billboard
+	local billboard = Instance.new("BillboardGui")
+	billboard.Size = UDim2.new(0,150,0,45)
+	billboard.StudsOffset = Vector3.new(0, 2.5, 0)
+	billboard.AlwaysOnTop = true
+	billboard.Parent = mainPart
+	table.insert(objects, billboard)
+
+	-- White Dot
+	local dot = Instance.new("Frame")
+	dot.Size = UDim2.new(0,8,0,8)
+	dot.Position = UDim2.new(0.5,-4,0,0)
+	dot.BackgroundColor3 = Color3.new(1,1,1)
+	dot.BorderSizePixel = 0
+	dot.Parent = billboard
+	Instance.new("UICorner", dot).CornerRadius = UDim.new(1,0)
+
+	-- Name + Distance
+	local nameLabel = Instance.new("TextLabel")
+	nameLabel.Size = UDim2.new(1,0,0,22)
+	nameLabel.Position = UDim2.new(0,0,0,12)
+	nameLabel.BackgroundTransparency = 1
+	nameLabel.TextColor3 = Color3.new(1,1,1)
+	nameLabel.TextStrokeTransparency = 0
+	nameLabel.TextScaled = true
+	nameLabel.Font = Enum.Font.GothamBold
+	nameLabel.Parent = billboard
+
+	-- Distance updater
+	local conn
+	conn = RunService.Heartbeat:Connect(function()
+		if not hrp or not mainPart or not mainPart.Parent then
+			if conn then conn:Disconnect() end
+			return
+		end
+		local dist = (hrp.Position - mainPart.Position).Magnitude
+		nameLabel.Text = string.format("%s - %dm", model.Name, math.floor(dist))
+	end)
+
+	ActiveESP[model] = {
+		objs = objects,
+		conn = conn
+	}
+end
+
+local function refreshESP()
+	for model,_ in pairs(ActiveESP) do
+		removeESP(model)
+	end
+	if not SystemEnabled then return end
+	for _, obj in ipairs(workspace:GetDescendants()) do
+		if obj:IsA("Model") and SelectedLoot[obj.Name] then
+			addESP(obj)
+		end
+	end
+end
+
+workspace.DescendantAdded:Connect(function(obj)
+	if SystemEnabled and obj:IsA("Model") and SelectedLoot[obj.Name] then
+		addESP(obj)
+	end
+end)
+
+--========================
+-- CREATE CHECKBOX LIST
+--========================
+
+local function createLootButton(name)
+	local btn = Instance.new("TextButton")
+	btn.Size = UDim2.new(1,0,0,35)
+	btn.Text = "[ ] "..name
+	btn.BackgroundColor3 = Color3.fromRGB(40,40,40)
+	btn.TextColor3 = Color3.new(1,1,1)
+	btn.TextScaled = true
+	btn.Parent = scroll
+	Instance.new("UICorner", btn)
+
+	btn.MouseButton1Click:Connect(function()
+		SelectedLoot[name] = not SelectedLoot[name]
+		btn.Text = (SelectedLoot[name] and "[✓] " or "[ ] ") .. name
+		btn.BackgroundColor3 = SelectedLoot[name]
+			and Color3.fromRGB(0,120,0)
+			or Color3.fromRGB(40,40,40)
+		refreshESP()
+	end)
+end
+
+for _, loot in ipairs(lootFolder:GetChildren()) do
+	createLootButton(loot.Name)
+end
+
+-- Toggle Logic
+toggle.MouseButton1Click:Connect(function()
+	SystemEnabled = not SystemEnabled
+	toggle.Text = SystemEnabled and "ESP: ON" or "ESP: OFF"
+	toggle.BackgroundColor3 = SystemEnabled
+		and Color3.fromRGB(0,150,0)
+		or Color3.fromRGB(150,0,0)
+	refreshESP()
+end)
+
+print("Loot Debug ESP Loaded (With Distance)")
