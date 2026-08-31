@@ -1,5 +1,5 @@
 -- LocalScript (StarterPlayerScripts)
--- Auto Collect Plants (Original Base + Area Collect + Advanced Mobile UI + Multi-Select Perfect Sort)
+-- Auto Collect Plants (Endless + Area Collect + Mobile UI + Water Fix + Smart Verify Fix)
 
 local Players = game:GetService("Players")
 local TweenService = game:GetService("TweenService")
@@ -21,15 +21,16 @@ end)
 -- ================= CONFIG ORIGINAL =================
 local tweenSpeed = 500 -- studs per second
 local scanInterval = 0.9
-local recentCooldown = 2.0 -- detik agar tidak balik ke plant yang sama
-local maxRetryPerPrompt = 2
-local retryBuffer = 0.12 -- tambahan setelah HoldDuration
+local recentCooldown = 5.0 -- [DIPERLAMA] Mencegah bolak-balik ke tempat yang sama
+local maxRetryPerPrompt = 3 -- [DITAMBAH] Agar lebih gigih mengambil item yang lag
+local retryBuffer = 0.15 
 local noclipEnabled = true 
-local clusterRadius = 25 -- JARAK AREA COLLECT (Radius rombongan)
+local clusterRadius = 25 -- Radius area collect
 
 local autoCollect = false
-local targetPlants = {} -- Berubah menjadi tabel untuk Multi-Select
+local targetPlants = {} 
 local plantButtons = {}
+local knownPlants = {} 
 
 local recentCollected = {}
 local scanning = false
@@ -53,7 +54,7 @@ local stroke = Instance.new("UIStroke", mainFrame)
 stroke.Color = Color3.fromRGB(80, 80, 90)
 stroke.Thickness = 2
 
--- Header (Area Draggable)
+-- Header
 local header = Instance.new("Frame", mainFrame)
 header.Size = UDim2.new(1, 0, 0, 45)
 header.BackgroundColor3 = Color3.fromRGB(30, 30, 38)
@@ -71,7 +72,7 @@ local title = Instance.new("TextLabel", header)
 title.Size = UDim2.new(1, -50, 1, 0)
 title.Position = UDim2.new(0, 15, 0, 0)
 title.BackgroundTransparency = 1
-title.Text = "Auto Farm (Multi-Select)"
+title.Text = "Auto Farm (Endless)"
 title.Font = Enum.Font.GothamBold
 title.TextSize = 15
 title.TextColor3 = Color3.fromRGB(255, 255, 255)
@@ -108,7 +109,7 @@ uiList:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(function()
     scrollFrame.CanvasSize = UDim2.new(0, 0, 0, uiList.AbsoluteContentSize.Y + 10)
 end)
 
--- Tombol Utama
+-- Buttons
 local toggleBtn = Instance.new("TextButton", contentFrame)
 toggleBtn.Size = UDim2.new(0.6, 0, 0, 45)
 toggleBtn.Position = UDim2.new(0, 10, 1, -55)
@@ -178,12 +179,6 @@ end)
 -- ================= GUI LOGIC & SCANNING =================
 local plantsRoot = workspace:FindFirstChild("Plants")
 
-local function safeDestroyGui(obj)
-    if obj and obj.Destroy and type(obj.Destroy) == "function" then
-        pcall(function() obj:Destroy() end)
-    end
-end
-
 local function updateSelectedCount()
     local count = 0
     for _, isSelected in pairs(targetPlants) do
@@ -206,7 +201,7 @@ local function createPlantButton(name)
     Instance.new("UICorner", btn).CornerRadius = UDim.new(0, 8)
 
     btn.MouseButton1Click:Connect(function()
-        targetPlants[name] = not targetPlants[name] -- Toggle pilihan
+        targetPlants[name] = not targetPlants[name]
         btn.BackgroundColor3 = targetPlants[name] and Color3.fromRGB(50, 180, 80) or Color3.fromRGB(50, 50, 60)
         updateSelectedCount()
     end)
@@ -217,11 +212,6 @@ local function scanUniquePlants()
     if scanning then return end
     scanning = true
 
-    for name, btn in pairs(plantButtons) do
-        if not btn or not btn.Parent then plantButtons[name] = nil end
-    end
-
-    local foundNames = {}
     if plantsRoot then
         for _, child in ipairs(plantsRoot:GetDescendants()) do
             if child:IsA("Model") then
@@ -235,22 +225,15 @@ local function scanUniquePlants()
                         end
                     end
                 end
-                if hasActivePrompt then foundNames[child.Name] = true end
+                if hasActivePrompt then 
+                    knownPlants[child.Name] = true 
+                end
             end
         end
     end
 
-    for name,_ in pairs(foundNames) do createPlantButton(name) end
-
-    local count = 0
-    for name, btn in pairs(plantButtons) do
-        if not foundNames[name] then
-            safeDestroyGui(btn)
-            plantButtons[name] = nil
-            targetPlants[name] = false -- Reset state jika item hilang
-        else
-            count = count + 1
-        end
+    for name,_ in pairs(knownPlants) do 
+        createPlantButton(name) 
     end
 
     updateSelectedCount()
@@ -286,6 +269,7 @@ local function disableNoclip()
             end
         end
     end
+    if hrp then pcall(function() hrp.Anchored = false end) end
 end
 
 local currentGyro = nil
@@ -325,7 +309,6 @@ local function findAllPlants()
     local result = {}
     if not plantsRoot then return result end
     
-    -- Cek apakah ada minimal 1 target yang aktif
     local hasTarget = false
     for _, isSelected in pairs(targetPlants) do
         if isSelected then hasTarget = true break end
@@ -333,7 +316,6 @@ local function findAllPlants()
     if not hasTarget then return result end
 
     for _, obj in ipairs(plantsRoot:GetDescendants()) do
-        -- Hanya masukkan plant yang nama modelnya diaktifkan (true) di targetPlants
         if obj:IsA("Model") and targetPlants[obj.Name] then
             local hasActivePrompt = false
             for _, prompt in ipairs(obj:GetDescendants()) do
@@ -365,6 +347,7 @@ end
 
 local function moveTo(pos)
     if not pos or not hrp then return false end
+    hrp.Anchored = false 
     applyStabilizer(1.5)
 
     local distance = (hrp.Position - pos).Magnitude
@@ -397,7 +380,7 @@ local function wasRecentlyCollected(model)
     return (tick() - t) < recentCooldown
 end
 
--- ================= AREA COLLECT =================
+-- ================= AREA COLLECT DENGAN SMART VERIFICATION =================
 local function collectFromPlant(plant, allPlants)
     if not plant or not plant:IsA("Model") then return false end
     if wasRecentlyCollected(plant) then return false end
@@ -408,67 +391,88 @@ local function collectFromPlant(plant, allPlants)
     local moved = moveTo(pos)
     if not moved then return false end
 
-    local nearbyPlants = {}
+    if hrp then hrp.Anchored = true end -- Kunci di air / darat
+
+    -- Kumpulkan semua prompt di area sekitar (radius 25 studs)
+    local activePrompts = {}
     for _, p in ipairs(allPlants) do
         if not wasRecentlyCollected(p) then
             local pPos = getPlantPosition(p)
             if pPos and (hrp.Position - pPos).Magnitude <= clusterRadius then
-                table.insert(nearbyPlants, p)
-            end
-        end
-    end
-
-    local anyTriggered = false
-    local maxWaitDuration = 0
-
-    for _, p in ipairs(nearbyPlants) do
-        local prompts = {}
-        for _, desc in ipairs(p:GetDescendants()) do
-            if desc:IsA("ProximityPrompt") and desc.Enabled then
-                local collectable = desc.Parent:FindFirstChild("Collectable")
-                if not collectable or collectable.Value == true then
-                    table.insert(prompts, desc)
+                for _, desc in ipairs(p:GetDescendants()) do
+                    if desc:IsA("ProximityPrompt") and desc.Enabled then
+                        local collectable = desc.Parent:FindFirstChild("Collectable")
+                        if not collectable or collectable.Value == true then
+                            table.insert(activePrompts, {prompt = desc, plantModel = p})
+                        end
+                    end
                 end
             end
         end
+    end
 
-        if #prompts > 0 then
-            anyTriggered = true
-            markCollected(p)
+    if #activePrompts > 0 then
+        -- Tandai duluan agar tidak diganggu oleh iterasi lain
+        for _, item in ipairs(activePrompts) do
+            markCollected(item.plantModel)
+        end
 
-            for _, prompt in ipairs(prompts) do
-                local holdTime = (prompt.HoldDuration or 0.05) + retryBuffer
-                if holdTime > maxWaitDuration then maxWaitDuration = holdTime end
-
-                task.spawn(function()
-                    local tries = 0
-                    while tries < maxRetryPerPrompt do
-                        tries = tries + 1
-                        task.spawn(function() triggerPrompt(prompt) end)
-                        task.wait(holdTime)
-                        
-                        local stillActive = false
-                        if prompt and prompt.Parent and prompt:IsA("ProximityPrompt") then
-                            if prompt.Enabled then
-                                local collectable = prompt.Parent:FindFirstChild("Collectable")
-                                if not collectable or collectable.Value == true then
-                                    stillActive = true
-                                end
+        -- 1. Picu (Trigger) semua prompt secara bersamaan
+        for _, item in ipairs(activePrompts) do
+            task.spawn(function()
+                local tries = 0
+                while tries < maxRetryPerPrompt do
+                    tries = tries + 1
+                    task.spawn(function() triggerPrompt(item.prompt) end)
+                    task.wait((item.prompt.HoldDuration or 0.05) + retryBuffer)
+                    
+                    local stillActive = false
+                    if item.prompt and item.prompt.Parent and item.prompt:IsA("ProximityPrompt") then
+                        if item.prompt.Enabled then
+                            local col = item.prompt.Parent:FindFirstChild("Collectable")
+                            if not col or col.Value == true then
+                                stillActive = true
                             end
                         end
-                        
-                        if not stillActive then break end
-                        task.wait(0.08)
                     end
-                end)
-            end
+                    
+                    if not stillActive then break end
+                    task.wait(0.1)
+                end
+            end)
         end
-    end
 
-    if anyTriggered then
-        task.wait(maxWaitDuration + 0.1)
+        -- 2. SMART VERIFICATION LOOP (Mencegah Bolak-Balik)
+        -- Karakter akan diam menunggu sampai semua prompt BENAR-BENAR HILANG / masuk inventory
+        local timeout = 5.0 -- Batas maksimal nunggu (failsafe)
+        local timeWaited = 0
+
+        while timeWaited < timeout do
+            local allCleared = true
+            
+            for _, item in ipairs(activePrompts) do
+                -- Cek apakah prompt masih aktif di dunia (belum ke-collect server)
+                if item.prompt and item.prompt.Parent and item.prompt.Enabled then
+                    local col = item.prompt.Parent:FindFirstChild("Collectable")
+                    if not col or col.Value == true then
+                        allCleared = false
+                        break
+                    end
+                end
+            end
+            
+            -- Jika semua item sudah bersih (sukses collect), langsung stop menunggu
+            if allCleared then break end
+            
+            task.wait(0.2)
+            timeWaited = timeWaited + 0.2
+        end
+
+        if hrp then hrp.Anchored = false end
         return true
     end
+    
+    if hrp then hrp.Anchored = false end
     return false
 end
 
@@ -485,8 +489,6 @@ task.spawn(function()
 
             local plants = findAllPlants()
             if #plants > 0 then
-                -- Sortir absolute by distance: tidak peduli nama plantnya, 
-                -- selama dicentang, kita terbang ke yang paling dekat.
                 table.sort(plants, function(a,b)
                     local pa, pb = getPlantPosition(a), getPlantPosition(b)
                     if not pa then return false end
