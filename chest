@@ -1,5 +1,5 @@
 -- LocalScript (StarterPlayerScripts)
--- Auto Collect Chests (FIXED: Lebih presisi saat menekan prompt agar tidak langsung skip)
+-- Auto Collect Chests (FIXED & OPTIMIZED: Anti-Stuck & Safe Yielding)
 
 local Players = game:GetService("Players")
 local TweenService = game:GetService("TweenService")
@@ -20,10 +20,10 @@ end)
 
 -- Config
 local tweenSpeed = 500 -- studs per second
-local scanInterval = 1.0 -- Ditambah sedikit agar tidak terlalu agresif scanning saat mengoleksi
-local recentCooldown = 3.5 -- Ditambah agar tidak bolak-balik ke chest yang gagal/masih loading
-local maxRetryPerPrompt = 3 -- Ditambah kesempatan mencoba jika gagal pencet pertama kali
-local retryBuffer = 0.25 -- Ditambah jeda setelah HoldDuration agar server sempat memproses
+local scanInterval = 1.0 
+local recentCooldown = 3.5 
+local maxRetryPerPrompt = 3 
+local retryBuffer = 0.25 
 local noclipEnabled = true 
 
 local autoCollect = false
@@ -31,10 +31,10 @@ local targetChest = nil
 local chestButtons = {}
 
 -- tables
-local recentCollected = {} -- [model] = timestamp
+local recentCollected = {} 
 local scanning = false
 
--- GUI (simple, draggable)
+-- GUI
 local screenGui = Instance.new("ScreenGui")
 screenGui.Name = "AutoCollectGui"
 screenGui.ResetOnSpawn = false
@@ -50,13 +50,6 @@ mainFrame.Active = true
 
 -- Draggable
 local dragging, dragInput, dragStart, startPos = false, nil, nil, nil
-local function update(input)
-    local delta = input.Position - dragStart
-    mainFrame.Position = UDim2.new(
-        startPos.X.Scale, startPos.X.Offset + delta.X,
-        startPos.Y.Scale, startPos.Y.Offset + delta.Y
-    )
-end
 mainFrame.InputBegan:Connect(function(input)
     if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
         dragging = true
@@ -75,7 +68,13 @@ mainFrame.InputChanged:Connect(function(input)
     end
 end)
 UserInputService.InputChanged:Connect(function(input)
-    if input == dragInput and dragging then update(input) end
+    if input == dragInput and dragging then 
+        local delta = input.Position - dragStart
+        mainFrame.Position = UDim2.new(
+            startPos.X.Scale, startPos.X.Offset + delta.X,
+            startPos.Y.Scale, startPos.Y.Offset + delta.Y
+        )
+    end
 end)
 
 local title = Instance.new("TextLabel", mainFrame)
@@ -135,14 +134,12 @@ end)
 
 local chestsRoot = workspace:WaitForChild("Chests", 10) 
 
--- helper: safe destroy GUI objects
 local function safeDestroyGui(obj)
     if obj and obj.Destroy and type(obj.Destroy) == "function" then
         pcall(function() obj:Destroy() end)
     end
 end
 
--- create button
 local function createChestButton(name)
     if chestButtons[name] and chestButtons[name].Parent then return end
     local btn = Instance.new("TextButton", scrollFrame)
@@ -165,7 +162,6 @@ local function createChestButton(name)
     chestButtons[name] = btn
 end
 
--- scan chests
 local function scanUniqueChests()
     if scanning then return end
     scanning = true
@@ -230,17 +226,14 @@ end
 refreshBtn.MouseButton1Click:Connect(scanUniqueChests)
 scanUniqueChests()
 
--- Noclip helper
 local noclipConn = nil
 local function enableNoclip()
     if noclipConn then return end
     noclipConn = RunService.Stepped:Connect(function()
         if char then
             for _, part in ipairs(char:GetChildren()) do
-                if part:IsA("BasePart") then
-                    if part.Name == "HumanoidRootPart" or part.Name == "LowerTorso" or part.Name == "UpperTorso" or part:IsDescendantOf(char) then
-                        part.CanCollide = false
-                    end
+                if part:IsA("BasePart") and part.CanCollide then
+                    part.CanCollide = false
                 end
             end
         end
@@ -260,9 +253,7 @@ local function disableNoclip()
     end
 end
 
--- Stabilizer
-local currentGyro = nil
-local currentBV = nil
+local currentGyro, currentBV = nil, nil
 local function applyStabilizer(duration)
     duration = duration or 1.2
     if not hrp then return end
@@ -316,9 +307,9 @@ local function findAllChests()
 end
 
 local function triggerPrompt(prompt)
-    if not prompt then return end
+    if not prompt or not prompt.Parent then return end
     if typeof(fireproximityprompt) == "function" then
-        pcall(function() fireproximityprompt(prompt) end)
+        pcall(function() fireproximityprompt(prompt, 1, true) end)
     else
         pcall(function()
             prompt:InputHoldBegin()
@@ -330,29 +321,47 @@ end
 
 local function moveTo(pos)
     if not pos or not hrp then return false end
-    applyStabilizer(2.0) -- Stabilizer diperpanjang durasinya agar tidak goyang saat mengoleksi
+    applyStabilizer(2.0) 
 
     local distance = (hrp.Position - pos).Magnitude
     local time = math.clamp(distance / tweenSpeed, 0.05, 2.5)
-    local success = pcall(function()
-        -- Kita teleport sedikit di depan/atas chest agar terhitung masuk ke radius prompt
-        local targetCFrame = CFrame.new(pos + Vector3.new(0, 1.5, 0)) 
-        local tween = TweenService:Create(hrp, TweenInfo.new(time, Enum.EasingStyle.Linear), {CFrame = targetCFrame})
-        tween:Play()
-        tween.Completed:Wait()
-    end)
     
-    task.wait(0.1) -- Jeda mikro setelah bergerak agar posisi tersinkronisasi dengan server
-    if success then return true end
-
-    if humanoid and humanoid.Parent then
-        local ok = pcall(function()
-            humanoid:MoveTo(pos + Vector3.new(0,1.5,0))
-            humanoid.MoveToFinished:Wait()
-        end)
-        return ok
+    local targetCFrame = CFrame.new(pos + Vector3.new(0, 1.5, 0)) 
+    local tween = TweenService:Create(hrp, TweenInfo.new(time, Enum.EasingStyle.Linear), {CFrame = targetCFrame})
+    
+    local tweenFinished = false
+    local connection = tween.Completed:Connect(function() tweenFinished = true end)
+    
+    tween:Play()
+    
+    -- [PERBAIKAN] Timeout custom agar tidak nyangkut jika karakter mati/stuck
+    local elapsed = 0
+    while not tweenFinished and elapsed < (time + 1.5) do
+        task.wait(0.1)
+        elapsed += 0.1
+        if not hrp or not hrp.Parent then break end 
     end
-    return false
+    
+    if connection then connection:Disconnect() end
+    pcall(function() tween:Cancel() end)
+    
+    task.wait(0.1) 
+
+    -- Cek posisi, kalau masih terlalu jauh berarti tween gagal
+    if hrp and (hrp.Position - pos).Magnitude > 10 then
+        if humanoid and humanoid.Parent then
+            pcall(function()
+                humanoid:MoveTo(pos + Vector3.new(0,1.5,0))
+            end)
+            -- [PERBAIKAN] Timeout juga untuk MoveTo Finished
+            local moveElapsed = 0
+            while humanoid.MoveDirection.Magnitude > 0 and moveElapsed < 2 do
+                task.wait(0.1)
+                moveElapsed += 0.1
+            end
+        end
+    end
+    return true
 end
 
 local function markCollected(model)
@@ -365,7 +374,6 @@ local function wasRecentlyCollected(model)
     return (tick() - t) < recentCooldown
 end
 
--- 🛠️ FIXED: Fungsi ini sekarang memastikan prompt benar-benar hilang/terproses sebelum selesai
 local function collectFromChest(chest)
     if not chest or not chest:IsA("Model") then return false end
     if wasRecentlyCollected(chest) then return false end
@@ -390,44 +398,31 @@ local function collectFromChest(chest)
 
     local function runPromptLogic(prompt)
         for i = 1, maxRetryPerPrompt do
-            -- Cek ulang apakah prompt masih aktif & valid sebelum klik
             if not prompt or not prompt.Parent or not prompt.Enabled then break end
             
             triggerPrompt(prompt)
-            
-            -- Waktu tunggu disesuaikan dengan HoldDuration chest ditambah buffer pengaman luar
             local waitTime = (prompt.HoldDuration or 0.05) + retryBuffer
             task.wait(waitTime)
             
-            -- Cek apakah objek "Collectable" sudah berubah status (artinya sukses terambil)
-            local collectable = prompt.Parent:FindFirstChild("Collectable")
+            local collectable = prompt.Parent and prompt.Parent:FindFirstChild("Collectable")
             if not prompt.Enabled or (collectable and collectable.Value == false) or not prompt:IsDescendantOf(workspace) then
-                break -- Keluar dari loop retry jika berhasil dicolllect
+                break 
             end
         end
     end
 
+    -- [PERBAIKAN] Dihapus penggunaan BindableEvent yang bikin stuck
     if #prompts == 1 then
         runPromptLogic(prompts[1])
     else
-        local remaining = #prompts
-        local doneEvent = Instance.new("BindableEvent")
-
         for _, prompt in ipairs(prompts) do
             task.spawn(function()
                 runPromptLogic(prompt)
-                remaining -= 1
-                if remaining <= 0 then
-                    doneEvent:Fire()
-                end
             end)
         end
-
-        doneEvent.Event:Wait()
-        doneEvent:Destroy()
+        task.wait(1.5) -- Tunggu sebentar saja untuk memberi waktu eksekusi bersamaan
     end
 
-    -- Tambahan jeda akhir opsional agar animasi collect server selesai
     task.wait(0.15) 
     markCollected(chest)
     return true
@@ -448,7 +443,8 @@ task.spawn(function()
                     return (hrp.Position - pa).Magnitude < (hrp.Position - pb).Magnitude
                 end)
                 for _, chest in ipairs(chests) do
-                    if not autoCollect then break end
+                    -- Cek ulang state agar bisa batal instan jika dimatikan di tengah jalan
+                    if not autoCollect or not hrp or not hrp.Parent then break end 
                     if not wasRecentlyCollected(chest) then
                         collectFromChest(chest)
                     end
@@ -458,7 +454,6 @@ task.spawn(function()
             disableNoclip()
         end
         task.wait(scanInterval)
-        scanUniqueChests()
     end
 end)
 
