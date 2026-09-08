@@ -1,0 +1,324 @@
+-- Robust Auto-Miner v3.2 (Auto Skill V Added)
+local Players = game:GetService("Players")
+local TweenService = game:GetService("TweenService")
+local UserInputService = game:GetService("UserInputService")
+local HttpService = game:GetService("HttpService")
+local VirtualInputManager = game:GetService("VirtualInputManager")
+local player = Players.LocalPlayer
+
+-- Hapus GUI lama jika ada
+local oldGui = player:FindFirstChild("PlayerGui") and player.PlayerGui:FindFirstChild("AutoMiner_Robust") or game:GetService("CoreGui"):FindFirstChild("AutoMiner_Robust")
+if oldGui then oldGui:Destroy() end
+
+local parentGui = player:FindFirstChild("PlayerGui") or game:GetService("CoreGui")
+
+-- Variables
+local mining = false
+local autoSkillV = false
+local char = player.Character or player.CharacterAdded:Wait()
+local hrp = char:WaitForChild("HumanoidRootPart")
+
+local CONFIG_FILE = "AutoMiner_SavedOres.json"
+local selectedOres = {} 
+local knownUIOres = {}
+
+if isfile and isfile(CONFIG_FILE) then
+    pcall(function()
+        local data = readfile(CONFIG_FILE)
+        selectedOres = HttpService:JSONDecode(data)
+    end)
+end
+
+local function saveConfig()
+    if writefile then
+        pcall(function()
+            writefile(CONFIG_FILE, HttpService:JSONEncode(selectedOres))
+        end)
+    end
+end
+
+local SPEED = 150 
+local SWING_DELAY = 0.1
+local STUCK_SECONDS = 3
+local NUDGE_DIST = 2
+
+-- ==================== GUI SETUP ====================
+local screenGui = Instance.new("ScreenGui")
+screenGui.Name = "AutoMiner_Robust"
+screenGui.ResetOnSpawn = false
+screenGui.Parent = parentGui
+
+local mainFrame = Instance.new("Frame")
+mainFrame.Size = UDim2.new(0, 220, 0, 310) -- Tinggi ditambah sedikit untuk tombol baru
+mainFrame.Position = UDim2.new(0.05, 0, 0.2, 0)
+mainFrame.BackgroundColor3 = Color3.fromRGB(25, 25, 25)
+mainFrame.BorderSizePixel = 0
+mainFrame.Parent = screenGui
+
+local titleLabel = Instance.new("TextLabel")
+titleLabel.Size = UDim2.new(1, 0, 0, 35)
+titleLabel.BackgroundColor3 = Color3.fromRGB(15, 15, 15)
+titleLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
+titleLabel.Font = Enum.Font.GothamBold
+titleLabel.TextSize = 14
+titleLabel.Text = "⛏️ Auto Miner v3.2"
+titleLabel.Parent = mainFrame
+
+local toggleBtn = Instance.new("TextButton")
+toggleBtn.Size = UDim2.new(0.9, 0, 0, 35)
+toggleBtn.Position = UDim2.new(0.05, 0, 0, 45)
+toggleBtn.BackgroundColor3 = Color3.fromRGB(180, 40, 40)
+toggleBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+toggleBtn.Font = Enum.Font.GothamBold
+toggleBtn.Text = "▶ START MINING"
+toggleBtn.Parent = mainFrame
+
+-- Tombol Baru: Auto Skill V
+local skillBtn = Instance.new("TextButton")
+skillBtn.Size = UDim2.new(0.9, 0, 0, 25)
+skillBtn.Position = UDim2.new(0.05, 0, 0, 85)
+skillBtn.BackgroundColor3 = Color3.fromRGB(100, 40, 40)
+skillBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+skillBtn.Font = Enum.Font.GothamSemibold
+skillBtn.TextSize = 12
+skillBtn.Text = "⚡ Auto Skill 'V' [OFF]"
+skillBtn.Parent = mainFrame
+
+local scrollFrame = Instance.new("ScrollingFrame")
+scrollFrame.Size = UDim2.new(0.9, 0, 1, -125)
+scrollFrame.Position = UDim2.new(0.05, 0, 0, 115)
+scrollFrame.BackgroundColor3 = Color3.fromRGB(35, 35, 35)
+scrollFrame.ScrollBarThickness = 4
+scrollFrame.Parent = mainFrame
+
+local uiListLayout = Instance.new("UIListLayout")
+uiListLayout.Parent = scrollFrame
+uiListLayout.Padding = UDim.new(0, 4)
+
+-- Mobile Draggable Logic
+local dragging, dragInput, dragStart, startPos
+titleLabel.InputBegan:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+        dragging = true
+        dragStart = input.Position
+        startPos = mainFrame.Position
+        input.Changed:Connect(function()
+            if input.UserInputState == Enum.UserInputState.End then dragging = false end
+        end)
+    end
+end)
+titleLabel.InputChanged:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch then
+        dragInput = input
+    end
+end)
+UserInputService.InputChanged:Connect(function(input)
+    if input == dragInput and dragging then
+        local delta = input.Position - dragStart
+        mainFrame.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + delta.X, startPos.Y.Scale, startPos.Y.Offset + delta.Y)
+    end
+end)
+
+-- ==================== LOGIC ====================
+
+player.CharacterAdded:Connect(function(c)
+    char = c
+    hrp = char:WaitForChild("HumanoidRootPart")
+end)
+
+local function getOreName(obj)
+    local dn = obj:FindFirstChild("DataName") or (obj.Parent and obj.Parent:FindFirstChild("DataName"))
+    if dn and dn.Value ~= "" then return tostring(dn.Value) end
+    return obj.Name
+end
+
+local function getHPValue(obj)
+    local hpNode = obj:FindFirstChild("HP") or obj:FindFirstChild("Health")
+    if not hpNode and obj.Parent then 
+        hpNode = obj.Parent:FindFirstChild("HP") or obj.Parent:FindFirstChild("Health") 
+    end
+    
+    if hpNode then
+        if hpNode:IsA("Humanoid") then return hpNode.Health, hpNode end
+        if hpNode:IsA("ValueBase") then return tonumber(hpNode.Value), hpNode end
+    end
+    return nil, nil
+end
+
+local function addOreToUI(oreName)
+    if knownUIOres[oreName] then return end
+    knownUIOres[oreName] = true
+    if selectedOres[oreName] == nil then selectedOres[oreName] = false end
+
+    local oreBtn = Instance.new("TextButton")
+    oreBtn.Name = oreName
+    oreBtn.Size = UDim2.new(1, 0, 0, 30)
+    oreBtn.Font = Enum.Font.GothamSemibold
+    oreBtn.TextSize = 12
+    oreBtn.Text = oreName .. (selectedOres[oreName] and " [ON]" or " [OFF]")
+    oreBtn.BackgroundColor3 = selectedOres[oreName] and Color3.fromRGB(40, 120, 40) or Color3.fromRGB(100, 40, 40)
+    oreBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+    oreBtn.Parent = scrollFrame
+
+    oreBtn.MouseButton1Click:Connect(function()
+        selectedOres[oreName] = not selectedOres[oreName]
+        oreBtn.Text = oreName .. (selectedOres[oreName] and " [ON]" or " [OFF]")
+        oreBtn.BackgroundColor3 = selectedOres[oreName] and Color3.fromRGB(40, 120, 40) or Color3.fromRGB(100, 40, 40)
+        saveConfig()
+    end)
+    scrollFrame.CanvasSize = UDim2.new(0, 0, 0, uiListLayout.AbsoluteContentSize.Y)
+end
+
+for ore, _ in pairs(selectedOres) do addOreToUI(ore) end
+
+task.spawn(function()
+    while task.wait(2) do
+        local oresFolder = workspace:FindFirstChild("Ores") or workspace
+        local items = oresFolder == workspace and workspace:GetChildren() or oresFolder:GetChildren()
+        
+        for _, item in ipairs(items) do
+            if item:IsA("Model") or item:IsA("BasePart") then
+                local hpVal, _ = getHPValue(item)
+                if hpVal ~= nil then
+                    local oreName = getOreName(item)
+                    if oreName and not knownUIOres[oreName] then
+                        addOreToUI(oreName)
+                        saveConfig()
+                    end
+                end
+            end
+        end
+    end
+end)
+
+local function findNearestAllowedOre()
+    local best, bestDist = nil, math.huge
+    local oresFolder = workspace:FindFirstChild("Ores") or workspace
+    local candidates = oresFolder == workspace and workspace:GetChildren() or oresFolder:GetChildren()
+    
+    for _, item in ipairs(candidates) do
+        if item:IsA("Model") or item:IsA("BasePart") then
+            local oreName = getOreName(item)
+            if oreName and selectedOres[oreName] then
+                local main = item:IsA("Model") and (item.PrimaryPart or item:FindFirstChildWhichIsA("BasePart")) or item
+                local hpVal, _ = getHPValue(item)
+                
+                if main and hpVal and hpVal > 0 then
+                    local d = (main.Position - hrp.Position).Magnitude
+                    if d < bestDist then
+                        best, bestDist = item, d
+                    end
+                end
+            end
+        end
+    end
+    return best
+end
+
+local function callToolHit(tool)
+    if not tool then return end
+    local remoteEvent = tool:FindFirstChildWhichIsA("RemoteEvent", true)
+    if remoteEvent then pcall(function() remoteEvent:FireServer() end) return end
+    
+    local remoteFunc = tool:FindFirstChildWhichIsA("RemoteFunction", true)
+    if remoteFunc then pcall(function() remoteFunc:InvokeServer() end) return end
+    
+    if tool:FindFirstChild("SwordScript") and tool.SwordScript:FindFirstChild("Activate") then
+        pcall(function() tool.SwordScript.Activate:FireServer() end) return
+    end
+    
+    if tool.Activate then pcall(function() tool:Activate() end) end
+end
+
+local function equipPickaxe()
+    local tool
+    for _, v in ipairs(char:GetChildren()) do
+        if v:IsA("Tool") and v.Name:lower():find("pickaxe") then tool = v end
+    end
+    if not tool and player:FindFirstChild("Backpack") then
+        for _, v in ipairs(player.Backpack:GetChildren()) do
+            if v:IsA("Tool") and v.Name:lower():find("pickaxe") then tool = v end
+        end
+    end
+    if tool and tool.Parent ~= char then
+        local hum = char:FindFirstChildWhichIsA("Humanoid")
+        if hum then hum:EquipTool(tool) end
+    end
+    return char:FindFirstChildWhichIsA("Tool")
+end
+
+-- ==================== AUTO SKILL LOOP ====================
+task.spawn(function()
+    while task.wait(1.5) do -- Tekan V setiap 1.5 detik (sesuaikan jika perlu)
+        if mining and autoSkillV then
+            pcall(function()
+                VirtualInputManager:SendKeyEvent(true, Enum.KeyCode.V, false, game)
+                task.wait(0.05)
+                VirtualInputManager:SendKeyEvent(false, Enum.KeyCode.V, false, game)
+            end)
+        end
+    end
+end)
+
+local function autoMineLoop()
+    while mining do
+        if not (char and hrp) then task.wait(1) continue end
+        
+        local ore = findNearestAllowedOre()
+        if not ore then 
+            task.wait(0.5) 
+            continue 
+        end
+
+        local main = ore:IsA("Model") and (ore.PrimaryPart or ore:FindFirstChildWhichIsA("BasePart")) or ore
+        local targetPos = main.Position + Vector3.new(0, 3, NUDGE_DIST)
+        
+        local dist = (hrp.Position - targetPos).Magnitude
+        local tTime = math.clamp(dist / SPEED, 0.1, 1)
+        
+        local bg = Instance.new("BodyVelocity")
+        bg.MaxForce = Vector3.new(math.huge, math.huge, math.huge)
+        bg.Velocity = Vector3.zero
+        bg.Parent = hrp
+        
+        local tween = TweenService:Create(hrp, TweenInfo.new(tTime, Enum.EasingStyle.Linear), {CFrame = CFrame.new(targetPos)})
+        tween:Play()
+        tween.Completed:Wait()
+        bg:Destroy() 
+
+        local tool = equipPickaxe()
+        local currentHP, hpNode = getHPValue(ore)
+        local lastHP = currentHP or 0
+        local lastTime = tick()
+
+        while mining and currentHP and currentHP > 0 and ore.Parent do
+            callToolHit(tool)
+            task.wait(SWING_DELAY)
+
+            currentHP, _ = getHPValue(ore)
+            
+            if currentHP ~= lastHP then
+                lastHP = currentHP
+                lastTime = tick()
+            elseif tick() - lastTime > STUCK_SECONDS then
+                hrp.CFrame = hrp.CFrame * CFrame.new(math.random(-2,2), 0, math.random(-2,2))
+                lastTime = tick()
+            end
+        end
+        task.wait(0.1)
+    end
+end
+
+-- ==================== BUTTON EVENTS ====================
+skillBtn.MouseButton1Click:Connect(function()
+    autoSkillV = not autoSkillV
+    skillBtn.Text = "⚡ Auto Skill 'V' [" .. (autoSkillV and "ON" or "OFF") .. "]"
+    skillBtn.BackgroundColor3 = autoSkillV and Color3.fromRGB(40, 120, 40) or Color3.fromRGB(100, 40, 40)
+end)
+
+toggleBtn.MouseButton1Click:Connect(function()
+    mining = not mining
+    toggleBtn.Text = mining and "⏹ STOP MINING" or "▶ START MINING"
+    toggleBtn.BackgroundColor3 = mining and Color3.fromRGB(40, 150, 40) or Color3.fromRGB(180, 40, 40)
+    if mining then task.spawn(autoMineLoop) end
+end)
