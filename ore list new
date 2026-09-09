@@ -1,4 +1,4 @@
--- Robust Auto-Miner v3.2 (Auto Skill V Added)
+-- Robust Auto-Miner v3.3 (Fixed Underwater Floating & Auto Skill)
 local Players = game:GetService("Players")
 local TweenService = game:GetService("TweenService")
 local UserInputService = game:GetService("UserInputService")
@@ -49,7 +49,7 @@ screenGui.ResetOnSpawn = false
 screenGui.Parent = parentGui
 
 local mainFrame = Instance.new("Frame")
-mainFrame.Size = UDim2.new(0, 220, 0, 310) -- Tinggi ditambah sedikit untuk tombol baru
+mainFrame.Size = UDim2.new(0, 220, 0, 310)
 mainFrame.Position = UDim2.new(0.05, 0, 0.2, 0)
 mainFrame.BackgroundColor3 = Color3.fromRGB(25, 25, 25)
 mainFrame.BorderSizePixel = 0
@@ -61,7 +61,7 @@ titleLabel.BackgroundColor3 = Color3.fromRGB(15, 15, 15)
 titleLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
 titleLabel.Font = Enum.Font.GothamBold
 titleLabel.TextSize = 14
-titleLabel.Text = "⛏️ Auto Miner v3.2"
+titleLabel.Text = "⛏️ Auto Miner v3.3"
 titleLabel.Parent = mainFrame
 
 local toggleBtn = Instance.new("TextButton")
@@ -73,7 +73,6 @@ toggleBtn.Font = Enum.Font.GothamBold
 toggleBtn.Text = "▶ START MINING"
 toggleBtn.Parent = mainFrame
 
--- Tombol Baru: Auto Skill V
 local skillBtn = Instance.new("TextButton")
 skillBtn.Size = UDim2.new(0.9, 0, 0, 25)
 skillBtn.Position = UDim2.new(0.05, 0, 0, 85)
@@ -247,9 +246,20 @@ local function equipPickaxe()
     return char:FindFirstChildWhichIsA("Tool")
 end
 
+-- Membersihkan BodyVelocity agar tidak stuck di udara/air saat tidak menambang
+local function clearPhysicsLock()
+    if hrp then
+        for _, v in ipairs(hrp:GetChildren()) do
+            if v:IsA("BodyVelocity") and v.Name == "MinerFreeze" then
+                v:Destroy()
+            end
+        end
+    end
+end
+
 -- ==================== AUTO SKILL LOOP ====================
 task.spawn(function()
-    while task.wait(1.5) do -- Tekan V setiap 1.5 detik (sesuaikan jika perlu)
+    while task.wait(1.5) do
         if mining and autoSkillV then
             pcall(function()
                 VirtualInputManager:SendKeyEvent(true, Enum.KeyCode.V, false, game)
@@ -266,6 +276,7 @@ local function autoMineLoop()
         
         local ore = findNearestAllowedOre()
         if not ore then 
+            clearPhysicsLock() -- Lepaskan karakter jika tidak ada target
             task.wait(0.5) 
             continue 
         end
@@ -276,7 +287,10 @@ local function autoMineLoop()
         local dist = (hrp.Position - targetPos).Magnitude
         local tTime = math.clamp(dist / SPEED, 0.1, 1)
         
+        -- Kunci Karakter (Mencegah jatuh/mengapung)
+        clearPhysicsLock()
         local bg = Instance.new("BodyVelocity")
+        bg.Name = "MinerFreeze"
         bg.MaxForce = Vector3.new(math.huge, math.huge, math.huge)
         bg.Velocity = Vector3.zero
         bg.Parent = hrp
@@ -284,7 +298,8 @@ local function autoMineLoop()
         local tween = TweenService:Create(hrp, TweenInfo.new(tTime, Enum.EasingStyle.Linear), {CFrame = CFrame.new(targetPos)})
         tween:Play()
         tween.Completed:Wait()
-        bg:Destroy() 
+        
+        -- PERBAIKAN: bg TIDAK DIHAPUS DI SINI! (Karakter akan stay di posisi, tidak mengapung)
 
         local tool = equipPickaxe()
         local currentHP, hpNode = getHPValue(ore)
@@ -305,8 +320,12 @@ local function autoMineLoop()
                 lastTime = tick()
             end
         end
+        
+        -- Setelah ore hancur, hapus kunci agar bisa ke tanah lagi (atau lanjut tween berikutnya)
+        clearPhysicsLock()
         task.wait(0.1)
     end
+    clearPhysicsLock() -- Bersihkan saat script dimatikan
 end
 
 -- ==================== BUTTON EVENTS ====================
@@ -320,5 +339,10 @@ toggleBtn.MouseButton1Click:Connect(function()
     mining = not mining
     toggleBtn.Text = mining and "⏹ STOP MINING" or "▶ START MINING"
     toggleBtn.BackgroundColor3 = mining and Color3.fromRGB(40, 150, 40) or Color3.fromRGB(180, 40, 40)
-    if mining then task.spawn(autoMineLoop) end
+    
+    if mining then 
+        task.spawn(autoMineLoop) 
+    else
+        clearPhysicsLock() -- Pastikan karakter lepas jika di-stop manual
+    end
 end)
