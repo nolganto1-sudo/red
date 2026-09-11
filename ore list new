@@ -1,4 +1,4 @@
--- Robust Auto-Miner v3.3 (Fixed Underwater Floating & Auto Skill)
+-- Robust Auto-Miner v3.4 (Auto-Resume on Respawn, Fixed Underwater, Auto Skill)
 local Players = game:GetService("Players")
 local TweenService = game:GetService("TweenService")
 local UserInputService = game:GetService("UserInputService")
@@ -61,7 +61,7 @@ titleLabel.BackgroundColor3 = Color3.fromRGB(15, 15, 15)
 titleLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
 titleLabel.Font = Enum.Font.GothamBold
 titleLabel.TextSize = 14
-titleLabel.Text = "⛏️ Auto Miner v3.3"
+titleLabel.Text = "⛏️ Auto Miner v3.4"
 titleLabel.Parent = mainFrame
 
 local toggleBtn = Instance.new("TextButton")
@@ -120,9 +120,21 @@ end)
 
 -- ==================== LOGIC ====================
 
+local function clearPhysicsLock()
+    if hrp and hrp.Parent then
+        for _, v in ipairs(hrp:GetChildren()) do
+            if v:IsA("BodyVelocity") and v.Name == "MinerFreeze" then
+                v:Destroy()
+            end
+        end
+    end
+end
+
+-- Menangkap karakter baru saat respawn
 player.CharacterAdded:Connect(function(c)
     char = c
     hrp = char:WaitForChild("HumanoidRootPart")
+    clearPhysicsLock()
 end)
 
 local function getOreName(obj)
@@ -202,7 +214,7 @@ local function findNearestAllowedOre()
                 local main = item:IsA("Model") and (item.PrimaryPart or item:FindFirstChildWhichIsA("BasePart")) or item
                 local hpVal, _ = getHPValue(item)
                 
-                if main and hpVal and hpVal > 0 then
+                if main and hpVal and hpVal > 0 and hrp and hrp.Parent then
                     local d = (main.Position - hrp.Position).Magnitude
                     if d < bestDist then
                         best, bestDist = item, d
@@ -215,7 +227,7 @@ local function findNearestAllowedOre()
 end
 
 local function callToolHit(tool)
-    if not tool then return end
+    if not tool or not tool.Parent then return end
     local remoteEvent = tool:FindFirstChildWhichIsA("RemoteEvent", true)
     if remoteEvent then pcall(function() remoteEvent:FireServer() end) return end
     
@@ -230,6 +242,7 @@ local function callToolHit(tool)
 end
 
 local function equipPickaxe()
+    if not char or not char.Parent then return nil end
     local tool
     for _, v in ipairs(char:GetChildren()) do
         if v:IsA("Tool") and v.Name:lower():find("pickaxe") then tool = v end
@@ -241,26 +254,17 @@ local function equipPickaxe()
     end
     if tool and tool.Parent ~= char then
         local hum = char:FindFirstChildWhichIsA("Humanoid")
-        if hum then hum:EquipTool(tool) end
+        if hum then pcall(function() hum:EquipTool(tool) end) end
     end
     return char:FindFirstChildWhichIsA("Tool")
-end
-
--- Membersihkan BodyVelocity agar tidak stuck di udara/air saat tidak menambang
-local function clearPhysicsLock()
-    if hrp then
-        for _, v in ipairs(hrp:GetChildren()) do
-            if v:IsA("BodyVelocity") and v.Name == "MinerFreeze" then
-                v:Destroy()
-            end
-        end
-    end
 end
 
 -- ==================== AUTO SKILL LOOP ====================
 task.spawn(function()
     while task.wait(1.5) do
-        if mining and autoSkillV then
+        local hum = char and char:FindFirstChildWhichIsA("Humanoid")
+        -- Pastikan skill tidak tertekan saat mati
+        if mining and autoSkillV and hum and hum.Health > 0 then
             pcall(function()
                 VirtualInputManager:SendKeyEvent(true, Enum.KeyCode.V, false, game)
                 task.wait(0.05)
@@ -272,60 +276,72 @@ end)
 
 local function autoMineLoop()
     while mining do
-        if not (char and hrp) then task.wait(1) continue end
-        
-        local ore = findNearestAllowedOre()
-        if not ore then 
-            clearPhysicsLock() -- Lepaskan karakter jika tidak ada target
-            task.wait(0.5) 
-            continue 
-        end
+        -- Gunakan pcall agar error karena karakter mati tidak menghentikan loop
+        local success, err = pcall(function()
+            -- Cek apakah karakter hidup dan utuh
+            if not char or not char.Parent or not hrp or not hrp.Parent then return end
+            local hum = char:FindFirstChildWhichIsA("Humanoid")
+            if not hum or hum.Health <= 0 then return end
 
-        local main = ore:IsA("Model") and (ore.PrimaryPart or ore:FindFirstChildWhichIsA("BasePart")) or ore
-        local targetPos = main.Position + Vector3.new(0, 3, NUDGE_DIST)
-        
-        local dist = (hrp.Position - targetPos).Magnitude
-        local tTime = math.clamp(dist / SPEED, 0.1, 1)
-        
-        -- Kunci Karakter (Mencegah jatuh/mengapung)
-        clearPhysicsLock()
-        local bg = Instance.new("BodyVelocity")
-        bg.Name = "MinerFreeze"
-        bg.MaxForce = Vector3.new(math.huge, math.huge, math.huge)
-        bg.Velocity = Vector3.zero
-        bg.Parent = hrp
-        
-        local tween = TweenService:Create(hrp, TweenInfo.new(tTime, Enum.EasingStyle.Linear), {CFrame = CFrame.new(targetPos)})
-        tween:Play()
-        tween.Completed:Wait()
-        
-        -- PERBAIKAN: bg TIDAK DIHAPUS DI SINI! (Karakter akan stay di posisi, tidak mengapung)
-
-        local tool = equipPickaxe()
-        local currentHP, hpNode = getHPValue(ore)
-        local lastHP = currentHP or 0
-        local lastTime = tick()
-
-        while mining and currentHP and currentHP > 0 and ore.Parent do
-            callToolHit(tool)
-            task.wait(SWING_DELAY)
-
-            currentHP, _ = getHPValue(ore)
-            
-            if currentHP ~= lastHP then
-                lastHP = currentHP
-                lastTime = tick()
-            elseif tick() - lastTime > STUCK_SECONDS then
-                hrp.CFrame = hrp.CFrame * CFrame.new(math.random(-2,2), 0, math.random(-2,2))
-                lastTime = tick()
+            local ore = findNearestAllowedOre()
+            if not ore then 
+                clearPhysicsLock()
+                task.wait(0.5) 
+                return 
             end
+
+            local main = ore:IsA("Model") and (ore.PrimaryPart or ore:FindFirstChildWhichIsA("BasePart")) or ore
+            local targetPos = main.Position + Vector3.new(0, 3, NUDGE_DIST)
+            
+            local dist = (hrp.Position - targetPos).Magnitude
+            local tTime = math.clamp(dist / SPEED, 0.1, 1)
+            
+            clearPhysicsLock()
+            local bg = Instance.new("BodyVelocity")
+            bg.Name = "MinerFreeze"
+            bg.MaxForce = Vector3.new(math.huge, math.huge, math.huge)
+            bg.Velocity = Vector3.zero
+            bg.Parent = hrp
+            
+            local tween = TweenService:Create(hrp, TweenInfo.new(tTime, Enum.EasingStyle.Linear), {CFrame = CFrame.new(targetPos)})
+            tween:Play()
+            tween.Completed:Wait()
+
+            local tool = equipPickaxe()
+            local currentHP, hpNode = getHPValue(ore)
+            local lastHP = currentHP or 0
+            local lastTime = tick()
+
+            while mining and currentHP and currentHP > 0 and ore.Parent do
+                -- Segera batalkan pukulan jika mati di tengah jalan
+                if not char or not hrp or not hrp.Parent or hum.Health <= 0 then break end
+
+                callToolHit(tool)
+                task.wait(SWING_DELAY)
+
+                currentHP, _ = getHPValue(ore)
+                
+                if currentHP ~= lastHP then
+                    lastHP = currentHP
+                    lastTime = tick()
+                elseif tick() - lastTime > STUCK_SECONDS then
+                    hrp.CFrame = hrp.CFrame * CFrame.new(math.random(-2,2), 0, math.random(-2,2))
+                    lastTime = tick()
+                end
+            end
+            
+            clearPhysicsLock()
+        end)
+
+        -- Jika ada error (biasanya karena mati mendadak saat tween), bersihkan dan jeda
+        if not success then
+            clearPhysicsLock()
+            task.wait(1.5) -- Jeda lebih lama sedikit menunggu respawn beres
         end
         
-        -- Setelah ore hancur, hapus kunci agar bisa ke tanah lagi (atau lanjut tween berikutnya)
-        clearPhysicsLock()
         task.wait(0.1)
     end
-    clearPhysicsLock() -- Bersihkan saat script dimatikan
+    clearPhysicsLock()
 end
 
 -- ==================== BUTTON EVENTS ====================
@@ -343,6 +359,6 @@ toggleBtn.MouseButton1Click:Connect(function()
     if mining then 
         task.spawn(autoMineLoop) 
     else
-        clearPhysicsLock() -- Pastikan karakter lepas jika di-stop manual
+        clearPhysicsLock()
     end
 end)
