@@ -1,124 +1,360 @@
--- ✅ GUI Setup
-local gui = Instance.new("ScreenGui", game.CoreGui)
-gui.Name = "GateJoiner"
+-- ==========================================
+-- Universal Auto Hub v4.0 (Miner + Gate Joiner)
+-- Mobile UI, Auto-Resume, Save Config, Anti-Crash
+-- ==========================================
 
-local button = Instance.new("TextButton")
-button.Size = UDim2.new(0, 200, 0, 45)
-button.Position = UDim2.new(0, 20, 0, 170)
-button.Text = "🚪 Stop Auto Join BlueGate"
-button.BackgroundColor3 = Color3.fromRGB(0, 120, 255)
-button.TextColor3 = Color3.fromRGB(255, 255, 255)
-button.Font = Enum.Font.GothamBold
-button.TextSize = 14
-button.Draggable = true
-button.Active = true
-button.BorderSizePixel = 0
-button.Parent = gui
+local Players = game:GetService("Players")
+local TweenService = game:GetService("TweenService")
+local UserInputService = game:GetService("UserInputService")
+local HttpService = game:GetService("HttpService")
+local VirtualInputManager = game:GetService("VirtualInputManager")
+local player = Players.LocalPlayer
 
-local uistroke = Instance.new("UIStroke", button)
-uistroke.Color = Color3.fromRGB(0, 170, 255)
-uistroke.Thickness = 2
-uistroke.Transparency = 0.25
+-- Bersihkan GUI Lama
+local oldGui = player:FindFirstChild("PlayerGui") and player.PlayerGui:FindFirstChild("UniversalAutoHub") or game:GetService("CoreGui"):FindFirstChild("UniversalAutoHub")
+if oldGui then oldGui:Destroy() end
+local parentGui = player:FindFirstChild("PlayerGui") or game:GetService("CoreGui")
 
-local player = game.Players.LocalPlayer
-local running = true -- Aktif langsung
+-- Variables State
+local char = player.Character or player.CharacterAdded:Wait()
+local hrp = char:WaitForChild("HumanoidRootPart")
+local isJoiningGate = false -- Flag anti-bentrok
 
--- 🚁 Stabilizer (Cegah Jatuh)
-local function applyStabilizer()
-	local char = player.Character
-	if not char then return end
-	local hrp = char:FindFirstChild("HumanoidRootPart")
-	if not hrp then return end
+-- ==================== CONFIG SYSTEM ====================
+local CONFIG_FILE = "UniversalAuto_Config.json"
+local config = {
+    Toggles = { AutoMine = false, AutoSkill = false, AutoJoin = false },
+    Ores = { ["IronOre"] = true, ["GoldOre"] = true, ["CoalOre"] = true }
+}
+local knownUIOres = {}
 
-	local gyro = Instance.new("BodyGyro")
-	gyro.P = 4000
-	gyro.D = 100
-	gyro.MaxTorque = Vector3.new(400000, 400000, 400000)
-	gyro.CFrame = hrp.CFrame
-	gyro.Parent = hrp
-
-	local bv = Instance.new("BodyVelocity")
-	bv.Velocity = Vector3.new(0, 0, 0)
-	bv.MaxForce = Vector3.new(100000, 100000, 100000)
-	bv.Parent = hrp
-
-	game.Debris:AddItem(gyro, 5)
-	game.Debris:AddItem(bv, 5)
+if isfile and isfile(CONFIG_FILE) then
+    pcall(function()
+        local data = HttpService:JSONDecode(readfile(CONFIG_FILE))
+        if data.Toggles then config.Toggles = data.Toggles end
+        if data.Ores then config.Ores = data.Ores end
+    end)
 end
 
--- ✈️ Safe Teleport 2-Langkah (naik → turun)
-local function safeTeleport(targetCFrame)
-	local TweenService = game:GetService("TweenService")
-	local char = player.Character or player.CharacterAdded:Wait()
-	local hrp = char:WaitForChild("HumanoidRootPart")
-
-	local tweenTime = 2.8
-	local liftHeight = 60
-
-	-- ⬆️ Naik dulu ke atas pulau
-	local upTween = TweenService:Create(hrp, TweenInfo.new(tweenTime, Enum.EasingStyle.Sine, Enum.EasingDirection.Out), {
-		CFrame = hrp.CFrame + Vector3.new(0, liftHeight, 0)
-	})
-	upTween:Play()
-	upTween.Completed:Wait()
-
-	-- ⬇️ Lalu turun ke Gate posisi
-	local downTween = TweenService:Create(hrp, TweenInfo.new(tweenTime, Enum.EasingStyle.Sine, Enum.EasingDirection.Out), {
-		CFrame = targetCFrame + Vector3.new(0, 5, 0)
-	})
-	downTween:Play()
-	downTween.Completed:Wait()
-
-	-- 🔄 Stabilizer untuk mengunci posisi
-	applyStabilizer()
-
-	task.wait(0.3)
-	pcall(function()
-		local hum = char:FindFirstChildOfClass("Humanoid")
-		if hum then
-			hum:ChangeState(Enum.HumanoidStateType.Seated)
-			task.wait(0.2)
-			hum:ChangeState(Enum.HumanoidStateType.GettingUp)
-		end
-	end)
+local function saveConfig()
+    if writefile then
+        pcall(function() writefile(CONFIG_FILE, HttpService:JSONEncode(config)) end)
+    end
 end
 
--- 🔁 Auto Join Gate Loop
-local function autoJoinLoop()
-	while true do
-		if running then
-			local gates = workspace:FindFirstChild("Gates")
-			if gates then
-				local blueGate = gates:FindFirstChild("BlueGate")
-				if blueGate and blueGate:FindFirstChild("Gate") then
-					local gatePart = blueGate.Gate
-					local join = gatePart:FindFirstChild("JoinParty")
-					local ready = gatePart:FindFirstChild("ReadyTag")
+-- ==================== GUI SETUP ====================
+local screenGui = Instance.new("ScreenGui")
+screenGui.Name = "UniversalAutoHub"
+screenGui.ResetOnSpawn = false
+screenGui.Parent = parentGui
 
-					safeTeleport(gatePart.CFrame)
-					task.wait(0.8)
+local mainFrame = Instance.new("Frame")
+mainFrame.Size = UDim2.new(0, 220, 0, 360)
+mainFrame.Position = UDim2.new(0.05, 0, 0.2, 0)
+mainFrame.BackgroundColor3 = Color3.fromRGB(20, 20, 20)
+mainFrame.BorderSizePixel = 0
+mainFrame.Parent = screenGui
 
-					if join then join:FireServer() end
-					task.wait(0.8)
-					if ready then ready:FireServer() end
-				end
-			end
-		end
-		task.wait(10) -- ⏳ Delay antar loop
-	end
-end
+local titleLabel = Instance.new("TextLabel")
+titleLabel.Size = UDim2.new(1, 0, 0, 35)
+titleLabel.BackgroundColor3 = Color3.fromRGB(15, 15, 15)
+titleLabel.TextColor3 = Color3.fromRGB(0, 170, 255)
+titleLabel.Font = Enum.Font.GothamBold
+titleLabel.TextSize = 14
+titleLabel.Text = "⚙️ Universal Auto Hub"
+titleLabel.Parent = mainFrame
 
--- ▶️ Mulai loop saat dijalankan
-task.spawn(autoJoinLoop)
+-- Tombol Toggles
+local btnMine = Instance.new("TextButton")
+btnMine.Size = UDim2.new(0.9, 0, 0, 35)
+btnMine.Position = UDim2.new(0.05, 0, 0, 45)
+btnMine.Font = Enum.Font.GothamBold
+btnMine.Parent = mainFrame
 
--- 🖱️ Toggle ON/OFF via tombol
-button.MouseButton1Click:Connect(function()
-	running = not running
-	if running then
-		button.Text = "🚪 Stop Auto Join BlueGate"
-		button.BackgroundColor3 = Color3.fromRGB(0, 120, 255)
-	else
-		button.Text = "▶️ Start Auto Join BlueGate"
-		button.BackgroundColor3 = Color3.fromRGB(40, 40, 40)
-	end
+local btnJoin = Instance.new("TextButton")
+btnJoin.Size = UDim2.new(0.9, 0, 0, 35)
+btnJoin.Position = UDim2.new(0.05, 0, 0, 85)
+btnJoin.Font = Enum.Font.GothamBold
+btnJoin.Parent = mainFrame
+
+local btnSkill = Instance.new("TextButton")
+btnSkill.Size = UDim2.new(0.9, 0, 0, 25)
+btnSkill.Position = UDim2.new(0.05, 0, 0, 125)
+btnSkill.Font = Enum.Font.GothamSemibold
+btnSkill.TextSize = 12
+btnSkill.Parent = mainFrame
+
+local scrollFrame = Instance.new("ScrollingFrame")
+scrollFrame.Size = UDim2.new(0.9, 0, 1, -165)
+scrollFrame.Position = UDim2.new(0.05, 0, 0, 155)
+scrollFrame.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
+scrollFrame.ScrollBarThickness = 4
+scrollFrame.Parent = mainFrame
+
+local uiListLayout = Instance.new("UIListLayout")
+uiListLayout.Parent = scrollFrame
+uiListLayout.Padding = UDim.new(0, 4)
+
+-- Dragging Logic
+local dragging, dragStart, startPos
+titleLabel.InputBegan:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+        dragging = true; dragStart = input.Position; startPos = mainFrame.Position
+        input.Changed:Connect(function() if input.UserInputState == Enum.UserInputState.End then dragging = false end end)
+    end
 end)
+UserInputService.InputChanged:Connect(function(input)
+    if (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) and dragging then
+        mainFrame.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + (input.Position - dragStart).X, startPos.Y.Scale, startPos.Y.Offset + (input.Position - dragStart).Y)
+    end
+end)
+
+-- ==================== CORE UTILITIES ====================
+player.CharacterAdded:Connect(function(c)
+    char = c
+    hrp = char:WaitForChild("HumanoidRootPart")
+end)
+
+local function isAlive()
+    if not char or not char.Parent or not hrp or not hrp.Parent then return false end
+    local hum = char:FindFirstChildWhichIsA("Humanoid")
+    return hum and hum.Health > 0
+end
+
+local function clearPhysicsLock()
+    if isAlive() then
+        for _, v in ipairs(hrp:GetChildren()) do
+            if v:IsA("BodyVelocity") and v.Name == "AutoFreeze" then v:Destroy() end
+        end
+    end
+end
+
+local function applyPhysicsLock()
+    clearPhysicsLock()
+    if isAlive() then
+        local bv = Instance.new("BodyVelocity")
+        bv.Name = "AutoFreeze"
+        bv.MaxForce = Vector3.new(math.huge, math.huge, math.huge)
+        bv.Velocity = Vector3.zero
+        bv.Parent = hrp
+    end
+end
+
+-- ==================== GATE JOINER LOGIC ====================
+local function safeTeleportGate(targetCFrame)
+    if not isAlive() then return end
+    isJoiningGate = true -- Pause Miner
+    
+    local tweenTime = 2.8
+    local liftHeight = 60
+    
+    -- Naik
+    local upTween = TweenService:Create(hrp, TweenInfo.new(tweenTime, Enum.EasingStyle.Sine, Enum.EasingDirection.Out), {CFrame = hrp.CFrame + Vector3.new(0, liftHeight, 0)})
+    upTween:Play()
+    upTween.Completed:Wait()
+    
+    if not isAlive() then isJoiningGate = false return end
+    
+    -- Turun
+    local downTween = TweenService:Create(hrp, TweenInfo.new(tweenTime, Enum.EasingStyle.Sine, Enum.EasingDirection.Out), {CFrame = targetCFrame + Vector3.new(0, 5, 0)})
+    downTween:Play()
+    downTween.Completed:Wait()
+
+    if not isAlive() then isJoiningGate = false return end
+    
+    applyPhysicsLock()
+    task.wait(0.3)
+    
+    pcall(function()
+        local hum = char:FindFirstChildOfClass("Humanoid")
+        if hum then
+            hum:ChangeState(Enum.HumanoidStateType.Seated)
+            task.wait(0.2)
+            hum:ChangeState(Enum.HumanoidStateType.GettingUp)
+        end
+    end)
+    isJoiningGate = false
+end
+
+local function autoJoinLoop()
+    while task.wait(5) do
+        if config.Toggles.AutoJoin and isAlive() then
+            local pcallSuccess, _ = pcall(function()
+                local gates = workspace:FindFirstChild("Gates")
+                if gates then
+                    local blueGate = gates:FindFirstChild("BlueGate")
+                    if blueGate and blueGate:FindFirstChild("Gate") then
+                        local gatePart = blueGate.Gate
+                        local join = gatePart:FindFirstChild("JoinParty")
+                        local ready = gatePart:FindFirstChild("ReadyTag")
+
+                        safeTeleportGate(gatePart.CFrame)
+                        task.wait(0.8)
+
+                        if join then join:FireServer() end
+                        task.wait(0.8)
+                        if ready then ready:FireServer() end
+                    end
+                end
+            end)
+            if not pcallSuccess then clearPhysicsLock() end
+        end
+    end
+end
+
+-- ==================== AUTO MINER LOGIC ====================
+-- (Fungsi baca nama & HP disingkat untuk menghemat ruang)
+local function getOreData(item)
+    local dn = item:FindFirstChild("DataName") or (item.Parent and item.Parent:FindFirstChild("DataName"))
+    local name = dn and dn.Value ~= "" and tostring(dn.Value) or item.Name
+    local hpNode = item:FindFirstChild("HP") or item:FindFirstChild("Health") or (item.Parent and (item.Parent:FindFirstChild("HP") or item.Parent:FindFirstChild("Health")))
+    local hp = (hpNode and hpNode:IsA("Humanoid")) and hpNode.Health or (hpNode and hpNode:IsA("ValueBase")) and tonumber(hpNode.Value) or nil
+    return name, hp, hpNode
+end
+
+local function updateOreUI(oreName)
+    if knownUIOres[oreName] then return end
+    knownUIOres[oreName] = true
+    if config.Ores[oreName] == nil then config.Ores[oreName] = false end
+
+    local btn = Instance.new("TextButton")
+    btn.Size = UDim2.new(1, 0, 0, 30)
+    btn.Font = Enum.Font.GothamSemibold
+    btn.TextSize = 12
+    btn.Text = oreName .. (config.Ores[oreName] and " [ON]" or " [OFF]")
+    btn.BackgroundColor3 = config.Ores[oreName] and Color3.fromRGB(40, 120, 40) or Color3.fromRGB(100, 40, 40)
+    btn.TextColor3 = Color3.fromRGB(255, 255, 255)
+    btn.Parent = scrollFrame
+
+    btn.MouseButton1Click:Connect(function()
+        config.Ores[oreName] = not config.Ores[oreName]
+        btn.Text = oreName .. (config.Ores[oreName] and " [ON]" or " [OFF]")
+        btn.BackgroundColor3 = config.Ores[oreName] and Color3.fromRGB(40, 120, 40) or Color3.fromRGB(100, 40, 40)
+        saveConfig()
+    end)
+    scrollFrame.CanvasSize = UDim2.new(0, 0, 0, uiListLayout.AbsoluteContentSize.Y)
+end
+
+-- Background scanner untuk UI Ores
+task.spawn(function()
+    while task.wait(2) do
+        local folder = workspace:FindFirstChild("Ores") or workspace
+        for _, item in ipairs(folder:GetChildren()) do
+            if item:IsA("Model") or item:IsA("BasePart") then
+                local name, hp, _ = getOreData(item)
+                if hp ~= nil and not knownUIOres[name] then
+                    updateOreUI(name)
+                    saveConfig()
+                end
+            end
+        end
+    end
+end)
+
+local function equipHitTool()
+    if not isAlive() then return nil end
+    local tool = char:FindFirstChildWhichIsA("Tool")
+    if not tool and player:FindFirstChild("Backpack") then tool = player.Backpack:FindFirstChildWhichIsA("Tool") end
+    if tool and tool.Parent ~= char then char:FindFirstChild("Humanoid"):EquipTool(tool) end
+    return tool
+end
+
+local function autoMineLoop()
+    while task.wait(0.2) do
+        if config.Toggles.AutoMine and not isJoiningGate then
+            pcall(function()
+                if not isAlive() then return end
+                
+                -- Cari Ore terdekat
+                local best, bestDist = nil, math.huge
+                local folder = workspace:FindFirstChild("Ores") or workspace
+                for _, item in ipairs(folder:GetChildren()) do
+                    if item:IsA("Model") or item:IsA("BasePart") then
+                        local name, hp, _ = getOreData(item)
+                        if config.Ores[name] and hp and hp > 0 then
+                            local main = item:IsA("Model") and (item.PrimaryPart or item:FindFirstChildWhichIsA("BasePart")) or item
+                            local d = (main.Position - hrp.Position).Magnitude
+                            if d < bestDist then best, bestDist = item, d end
+                        end
+                    end
+                end
+
+                if not best then clearPhysicsLock() return end
+
+                local main = best:IsA("Model") and (best.PrimaryPart or best:FindFirstChildWhichIsA("BasePart")) or best
+                local targetPos = main.Position + Vector3.new(0, 3, 2)
+                
+                applyPhysicsLock()
+                local tTime = math.clamp((hrp.Position - targetPos).Magnitude / 150, 0.1, 1)
+                local tween = TweenService:Create(hrp, TweenInfo.new(tTime, Enum.EasingStyle.Linear), {CFrame = CFrame.new(targetPos)})
+                tween:Play()
+                tween.Completed:Wait()
+
+                local tool = equipHitTool()
+                local _, currentHP, _ = getOreData(best)
+                local lastHP = currentHP or 0
+                local lastTime = tick()
+
+                while config.Toggles.AutoMine and not isJoiningGate and currentHP and currentHP > 0 and best.Parent and isAlive() do
+                    if tool then
+                        local re = tool:FindFirstChildWhichIsA("RemoteEvent", true)
+                        local rf = tool:FindFirstChildWhichIsA("RemoteFunction", true)
+                        local sw = tool:FindFirstChild("SwordScript")
+                        if re then pcall(function() re:FireServer() end)
+                        elseif rf then pcall(function() rf:InvokeServer() end)
+                        elseif sw and sw:FindFirstChild("Activate") then pcall(function() sw.Activate:FireServer() end)
+                        elseif tool.Activate then pcall(function() tool:Activate() end) end
+                    end
+                    task.wait(0.1)
+
+                    _, currentHP, _ = getOreData(best)
+                    if currentHP ~= lastHP then lastHP = currentHP; lastTime = tick()
+                    elseif tick() - lastTime > 3 then
+                        hrp.CFrame = hrp.CFrame * CFrame.new(math.random(-2,2), 0, math.random(-2,2))
+                        lastTime = tick()
+                    end
+                end
+                clearPhysicsLock()
+            end)
+        end
+    end
+end
+
+-- ==================== AUTO SKILL LOOP ====================
+task.spawn(function()
+    while task.wait(1.5) do
+        if config.Toggles.AutoSkill and isAlive() then
+            pcall(function()
+                VirtualInputManager:SendKeyEvent(true, Enum.KeyCode.V, false, game)
+                task.wait(0.05)
+                VirtualInputManager:SendKeyEvent(false, Enum.KeyCode.V, false, game)
+            end)
+        end
+    end
+end)
+
+-- ==================== UI UPDATE LOGIC ====================
+local function updateUIStates()
+    btnMine.Text = config.Toggles.AutoMine and "⏹ STOP MINING" or "⛏️ START MINING"
+    btnMine.BackgroundColor3 = config.Toggles.AutoMine and Color3.fromRGB(40, 150, 40) or Color3.fromRGB(150, 50, 50)
+    btnMine.TextColor3 = Color3.fromRGB(255, 255, 255)
+
+    btnJoin.Text = config.Toggles.AutoJoin and "🚪 STOP BLUE GATE" or "🚪 START BLUE GATE"
+    btnJoin.BackgroundColor3 = config.Toggles.AutoJoin and Color3.fromRGB(0, 120, 255) or Color3.fromRGB(50, 50, 50)
+    btnJoin.TextColor3 = Color3.fromRGB(255, 255, 255)
+
+    btnSkill.Text = "⚡ Auto Skill 'V' [" .. (config.Toggles.AutoSkill and "ON" or "OFF") .. "]"
+    btnSkill.BackgroundColor3 = config.Toggles.AutoSkill and Color3.fromRGB(40, 120, 40) or Color3.fromRGB(100, 40, 40)
+    btnSkill.TextColor3 = Color3.fromRGB(255, 255, 255)
+    
+    for ore, val in pairs(config.Ores) do updateOreUI(ore) end
+end
+
+btnMine.MouseButton1Click:Connect(function() config.Toggles.AutoMine = not config.Toggles.AutoMine; updateUIStates(); saveConfig(); if not config.Toggles.AutoMine then clearPhysicsLock() end end)
+btnJoin.MouseButton1Click:Connect(function() config.Toggles.AutoJoin = not config.Toggles.AutoJoin; updateUIStates(); saveConfig(); if not config.Toggles.AutoJoin then clearPhysicsLock() end end)
+btnSkill.MouseButton1Click:Connect(function() config.Toggles.AutoSkill = not config.Toggles.AutoSkill; updateUIStates(); saveConfig() end)
+
+-- Initialize
+updateUIStates()
+task.spawn(autoJoinLoop)
+task.spawn(autoMineLoop)
