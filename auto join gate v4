@@ -1,6 +1,6 @@
 -- ==========================================
--- Universal Auto Hub v4.1 (Miner + Gate Joiner)
--- Fixed Tween Speed (Anti-Rubberband) & Smart Auto-Reset
+-- Universal Auto Hub v4.2 (Miner + Gate Joiner)
+-- Very Safe Tween Speed & 30s Smart Auto-Reset
 -- ==========================================
 
 local Players = game:GetService("Players")
@@ -254,7 +254,6 @@ local function equipHitTool()
     return tool
 end
 
--- Fungsi Helper untuk mencari target ore
 local function findBestOre()
     local best, bestDist = nil, math.huge
     local folder = workspace:FindFirstChild("Ores") or workspace
@@ -274,27 +273,33 @@ local function findBestOre()
 end
 
 local function autoMineLoop()
-    while task.wait(0.2) do
+    while task.wait(0.5) do
         if config.Toggles.AutoMine and not isJoiningGate then
             pcall(function()
                 if not isAlive() then return end
                 
                 local best = findBestOre()
                 
-                -- LOGIKA RESET KETIKA ORE HABIS
+                -- LOGIKA RESET KETIKA ORE HABIS (SMART 30 DETIK)
                 if not best then
                     clearPhysicsLock()
-                    task.wait(2.5) -- Jeda sebentar untuk memastikan ore benar-benar habis (bukan delay render)
                     
-                    -- Cek ulang kedua kali, pastikan masih AutoMine aktif dan tidak sedang join Gate
-                    if config.Toggles.AutoMine and not isJoiningGate and not findBestOre() and isAlive() then
-                        local hum = char:FindFirstChildWhichIsA("Humanoid")
-                        if hum then
-                            hum.Health = 0 -- Reset karakter (Bunuh diri)
-                            task.wait(3) -- Tunggu animasi mati
+                    -- Tunggu maksimal 30 detik (30 kali iterasi per 1 detik)
+                    for i = 1, 30 do
+                        task.wait(1)
+                        -- Jika mining dimatikan, sedang masuk gate, ada ore baru, atau karakter mati -> batalkan hitung mundur reset
+                        if not config.Toggles.AutoMine or isJoiningGate or findBestOre() or not isAlive() then
+                            return -- Keluar dari pengecekan reset dan kembali ke loop utama
                         end
                     end
-                    return -- Lewati eksekusi di bawahnya dan kembali ke awal loop
+                    
+                    -- Jika setelah 30 detik masih kosong, bunuh diri (reset karakter)
+                    local hum = char:FindFirstChildWhichIsA("Humanoid")
+                    if hum then
+                        hum.Health = 0 
+                        task.wait(3) 
+                    end
+                    return 
                 end
 
                 local main = best:IsA("Model") and (best.PrimaryPart or best:FindFirstChildWhichIsA("BasePart")) or best
@@ -302,10 +307,10 @@ local function autoMineLoop()
                 
                 applyPhysicsLock()
                 
-                -- PERBAIKAN KECEPATAN TWEEN (Lebih Lambat & Stabil, Bebas Rubberband)
+                -- PERBAIKAN KECEPATAN TWEEN: Diturunkan drastis agar tidak rubberband
                 local distance = (hrp.Position - targetPos).Magnitude
-                local SPEED = 75 -- Jauh lebih aman untuk anti-cheat
-                local tTime = math.max(distance / SPEED, 0.1) -- Waktu fleksibel menyesuaikan jarak
+                local SPEED = 35 -- Kecepatan lebih lambat (sebelumnya 75)
+                local tTime = math.max(distance / SPEED, 0.1) 
                 
                 local tween = TweenService:Create(hrp, TweenInfo.new(tTime, Enum.EasingStyle.Linear), {CFrame = CFrame.new(targetPos)})
                 tween:Play()
