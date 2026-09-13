@@ -1,6 +1,6 @@
 -- ==========================================
--- Universal Auto Hub v4.3 (Miner + Gate Joiner)
--- Fixed Gate Teleport Speed (No Rubberband) & Smart Auto-Reset
+-- Universal Auto Hub v4.4 (Miner + Gate Joiner)
+-- Fixed In-Gate Mining (Deep Scan) & Smart Auto-Reset
 -- ==========================================
 
 local Players = game:GetService("Players")
@@ -61,7 +61,7 @@ titleLabel.BackgroundColor3 = Color3.fromRGB(15, 15, 15)
 titleLabel.TextColor3 = Color3.fromRGB(0, 170, 255)
 titleLabel.Font = Enum.Font.GothamBold
 titleLabel.TextSize = 14
-titleLabel.Text = "⚙️ Universal Auto Hub v4.3"
+titleLabel.Text = "⚙️ Universal Hub v4.4"
 titleLabel.Parent = mainFrame
 
 local btnMine = Instance.new("TextButton")
@@ -145,11 +145,9 @@ local function safeTeleportGate(targetCFrame)
     isJoiningGate = true
     clearPhysicsLock()
     
-    -- PERBAIKAN: Waktu tween diperlambat agar tidak keno anti-cheat/TP balik (2.8s -> 6.0s)
-    local tweenTime = 6.0 
+    local tweenTime = 6.0 -- Aman dari anti-cheat / rubberband
     local liftHeight = 60
     
-    -- ⬆️ Naik dulu ke atas pulau
     local upTween = TweenService:Create(hrp, TweenInfo.new(tweenTime, Enum.EasingStyle.Sine, Enum.EasingDirection.Out), {
         CFrame = hrp.CFrame + Vector3.new(0, liftHeight, 0)
     })
@@ -158,7 +156,6 @@ local function safeTeleportGate(targetCFrame)
     
     if not isAlive() then isJoiningGate = false return end
     
-    -- ⬇️ Lalu turun ke Gate posisi
     local downTween = TweenService:Create(hrp, TweenInfo.new(tweenTime, Enum.EasingStyle.Sine, Enum.EasingDirection.Out), {
         CFrame = targetCFrame + Vector3.new(0, 5, 0)
     })
@@ -207,13 +204,17 @@ local function autoJoinLoop()
     end
 end
 
--- ==================== AUTO MINER LOGIC ====================
+-- ==================== AUTO MINER LOGIC (REWORKED) ====================
+-- PERBAIKAN: Baca HP secara instan untuk mempercepat Deep Scan
 local function getOreData(item)
+    local hpNode = item:FindFirstChild("HP") or item:FindFirstChild("Health")
+    if not hpNode then return nil, nil end -- Bail out super cepat jika bukan benda bernyawa
+    
     local dn = item:FindFirstChild("DataName") or (item.Parent and item.Parent:FindFirstChild("DataName"))
     local name = dn and dn.Value ~= "" and tostring(dn.Value) or item.Name
-    local hpNode = item:FindFirstChild("HP") or item:FindFirstChild("Health") or (item.Parent and (item.Parent:FindFirstChild("HP") or item.Parent:FindFirstChild("Health")))
-    local hp = (hpNode and hpNode:IsA("Humanoid")) and hpNode.Health or (hpNode and hpNode:IsA("ValueBase")) and tonumber(hpNode.Value) or nil
-    return name, hp, hpNode
+    local hp = (hpNode:IsA("Humanoid")) and hpNode.Health or (hpNode:IsA("ValueBase")) and tonumber(hpNode.Value) or nil
+    
+    return name, hp
 end
 
 local function updateOreUI(oreName)
@@ -239,12 +240,12 @@ local function updateOreUI(oreName)
     scrollFrame.CanvasSize = UDim2.new(0, 0, 0, uiListLayout.AbsoluteContentSize.Y)
 end
 
+-- PERBAIKAN: Background Scanner menembus seluruh Workspace
 task.spawn(function()
     while task.wait(2) do
-        local folder = workspace:FindFirstChild("Ores") or workspace
-        for _, item in ipairs(folder:GetChildren()) do
+        for _, item in ipairs(workspace:GetDescendants()) do
             if item:IsA("Model") or item:IsA("BasePart") then
-                local name, hp, _ = getOreData(item)
+                local name, hp = getOreData(item)
                 if hp ~= nil and not knownUIOres[name] then
                     updateOreUI(name)
                     saveConfig()
@@ -262,13 +263,13 @@ local function equipHitTool()
     return tool
 end
 
+-- PERBAIKAN: Deep Scan Finder (Mencari di dalam Gate)
 local function findBestOre()
     local best, bestDist = nil, math.huge
-    local folder = workspace:FindFirstChild("Ores") or workspace
-    for _, item in ipairs(folder:GetChildren()) do
+    for _, item in ipairs(workspace:GetDescendants()) do
         if item:IsA("Model") or item:IsA("BasePart") then
-            local name, hp, _ = getOreData(item)
-            if config.Ores[name] and hp and hp > 0 then
+            local name, hp = getOreData(item)
+            if name and config.Ores[name] and hp and hp > 0 then
                 local main = item:IsA("Model") and (item.PrimaryPart or item:FindFirstChildWhichIsA("BasePart")) or item
                 if main and hrp then
                     local d = (main.Position - hrp.Position).Magnitude
@@ -295,13 +296,12 @@ local function autoMineLoop()
                     -- Tunggu maksimal 30 detik
                     for i = 1, 30 do
                         task.wait(1)
-                        -- Jika AutoMine dimatikan, sedang terbang ke gate, ada ore baru, atau karakter mati -> batalkan reset
                         if not config.Toggles.AutoMine or isJoiningGate or findBestOre() or not isAlive() then
                             return
                         end
                     end
                     
-                    -- Jika setelah 30 detik tetap kosong, reset karakter
+                    -- Reset karakter jika benar-benar kosong
                     local hum = char:FindFirstChildWhichIsA("Humanoid")
                     if hum then
                         hum.Health = 0 
@@ -316,7 +316,7 @@ local function autoMineLoop()
                 applyPhysicsLock()
                 
                 local distance = (hrp.Position - targetPos).Magnitude
-                local SPEED = 60 -- Kecepatan normal untuk mining
+                local SPEED = 60 -- Kecepatan Mining
                 local tTime = math.max(distance / SPEED, 0.1) 
                 
                 local tween = TweenService:Create(hrp, TweenInfo.new(tTime, Enum.EasingStyle.Linear), {CFrame = CFrame.new(targetPos)})
@@ -324,7 +324,7 @@ local function autoMineLoop()
                 tween.Completed:Wait()
 
                 local tool = equipHitTool()
-                local _, currentHP, _ = getOreData(best)
+                local _, currentHP = getOreData(best)
                 local lastHP = currentHP or 0
                 local lastTime = tick()
 
@@ -340,7 +340,7 @@ local function autoMineLoop()
                     end
                     task.wait(0.1)
 
-                    _, currentHP, _ = getOreData(best)
+                    _, currentHP = getOreData(best)
                     if currentHP ~= lastHP then lastHP = currentHP; lastTime = tick()
                     elseif tick() - lastTime > 3 then
                         hrp.CFrame = hrp.CFrame * CFrame.new(math.random(-2,2), 0, math.random(-2,2))
