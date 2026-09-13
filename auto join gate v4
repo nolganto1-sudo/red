@@ -1,6 +1,6 @@
 -- ==========================================
--- Universal Auto Hub v4.0 (Miner + Gate Joiner)
--- Mobile UI, Auto-Resume, Save Config, Anti-Crash
+-- Universal Auto Hub v4.1 (Miner + Gate Joiner)
+-- Fixed Tween Speed (Anti-Rubberband) & Smart Auto-Reset
 -- ==========================================
 
 local Players = game:GetService("Players")
@@ -18,7 +18,7 @@ local parentGui = player:FindFirstChild("PlayerGui") or game:GetService("CoreGui
 -- Variables State
 local char = player.Character or player.CharacterAdded:Wait()
 local hrp = char:WaitForChild("HumanoidRootPart")
-local isJoiningGate = false -- Flag anti-bentrok
+local isJoiningGate = false 
 
 -- ==================== CONFIG SYSTEM ====================
 local CONFIG_FILE = "UniversalAuto_Config.json"
@@ -64,7 +64,6 @@ titleLabel.TextSize = 14
 titleLabel.Text = "⚙️ Universal Auto Hub"
 titleLabel.Parent = mainFrame
 
--- Tombol Toggles
 local btnMine = Instance.new("TextButton")
 btnMine.Size = UDim2.new(0.9, 0, 0, 35)
 btnMine.Position = UDim2.new(0.05, 0, 0, 45)
@@ -143,19 +142,17 @@ end
 -- ==================== GATE JOINER LOGIC ====================
 local function safeTeleportGate(targetCFrame)
     if not isAlive() then return end
-    isJoiningGate = true -- Pause Miner
+    isJoiningGate = true
     
     local tweenTime = 2.8
     local liftHeight = 60
     
-    -- Naik
     local upTween = TweenService:Create(hrp, TweenInfo.new(tweenTime, Enum.EasingStyle.Sine, Enum.EasingDirection.Out), {CFrame = hrp.CFrame + Vector3.new(0, liftHeight, 0)})
     upTween:Play()
     upTween.Completed:Wait()
     
     if not isAlive() then isJoiningGate = false return end
     
-    -- Turun
     local downTween = TweenService:Create(hrp, TweenInfo.new(tweenTime, Enum.EasingStyle.Sine, Enum.EasingDirection.Out), {CFrame = targetCFrame + Vector3.new(0, 5, 0)})
     downTween:Play()
     downTween.Completed:Wait()
@@ -203,7 +200,6 @@ local function autoJoinLoop()
 end
 
 -- ==================== AUTO MINER LOGIC ====================
--- (Fungsi baca nama & HP disingkat untuk menghemat ruang)
 local function getOreData(item)
     local dn = item:FindFirstChild("DataName") or (item.Parent and item.Parent:FindFirstChild("DataName"))
     local name = dn and dn.Value ~= "" and tostring(dn.Value) or item.Name
@@ -235,7 +231,6 @@ local function updateOreUI(oreName)
     scrollFrame.CanvasSize = UDim2.new(0, 0, 0, uiListLayout.AbsoluteContentSize.Y)
 end
 
--- Background scanner untuk UI Ores
 task.spawn(function()
     while task.wait(2) do
         local folder = workspace:FindFirstChild("Ores") or workspace
@@ -259,33 +254,59 @@ local function equipHitTool()
     return tool
 end
 
+-- Fungsi Helper untuk mencari target ore
+local function findBestOre()
+    local best, bestDist = nil, math.huge
+    local folder = workspace:FindFirstChild("Ores") or workspace
+    for _, item in ipairs(folder:GetChildren()) do
+        if item:IsA("Model") or item:IsA("BasePart") then
+            local name, hp, _ = getOreData(item)
+            if config.Ores[name] and hp and hp > 0 then
+                local main = item:IsA("Model") and (item.PrimaryPart or item:FindFirstChildWhichIsA("BasePart")) or item
+                if main and hrp then
+                    local d = (main.Position - hrp.Position).Magnitude
+                    if d < bestDist then best, bestDist = item, d end
+                end
+            end
+        end
+    end
+    return best
+end
+
 local function autoMineLoop()
     while task.wait(0.2) do
         if config.Toggles.AutoMine and not isJoiningGate then
             pcall(function()
                 if not isAlive() then return end
                 
-                -- Cari Ore terdekat
-                local best, bestDist = nil, math.huge
-                local folder = workspace:FindFirstChild("Ores") or workspace
-                for _, item in ipairs(folder:GetChildren()) do
-                    if item:IsA("Model") or item:IsA("BasePart") then
-                        local name, hp, _ = getOreData(item)
-                        if config.Ores[name] and hp and hp > 0 then
-                            local main = item:IsA("Model") and (item.PrimaryPart or item:FindFirstChildWhichIsA("BasePart")) or item
-                            local d = (main.Position - hrp.Position).Magnitude
-                            if d < bestDist then best, bestDist = item, d end
+                local best = findBestOre()
+                
+                -- LOGIKA RESET KETIKA ORE HABIS
+                if not best then
+                    clearPhysicsLock()
+                    task.wait(2.5) -- Jeda sebentar untuk memastikan ore benar-benar habis (bukan delay render)
+                    
+                    -- Cek ulang kedua kali, pastikan masih AutoMine aktif dan tidak sedang join Gate
+                    if config.Toggles.AutoMine and not isJoiningGate and not findBestOre() and isAlive() then
+                        local hum = char:FindFirstChildWhichIsA("Humanoid")
+                        if hum then
+                            hum.Health = 0 -- Reset karakter (Bunuh diri)
+                            task.wait(3) -- Tunggu animasi mati
                         end
                     end
+                    return -- Lewati eksekusi di bawahnya dan kembali ke awal loop
                 end
-
-                if not best then clearPhysicsLock() return end
 
                 local main = best:IsA("Model") and (best.PrimaryPart or best:FindFirstChildWhichIsA("BasePart")) or best
                 local targetPos = main.Position + Vector3.new(0, 3, 2)
                 
                 applyPhysicsLock()
-                local tTime = math.clamp((hrp.Position - targetPos).Magnitude / 150, 0.1, 1)
+                
+                -- PERBAIKAN KECEPATAN TWEEN (Lebih Lambat & Stabil, Bebas Rubberband)
+                local distance = (hrp.Position - targetPos).Magnitude
+                local SPEED = 75 -- Jauh lebih aman untuk anti-cheat
+                local tTime = math.max(distance / SPEED, 0.1) -- Waktu fleksibel menyesuaikan jarak
+                
                 local tween = TweenService:Create(hrp, TweenInfo.new(tTime, Enum.EasingStyle.Linear), {CFrame = CFrame.new(targetPos)})
                 tween:Play()
                 tween.Completed:Wait()
