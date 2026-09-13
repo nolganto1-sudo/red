@@ -18,6 +18,12 @@ local autoSkillV = false
 local char = player.Character or player.CharacterAdded:Wait()
 local hrp = char:WaitForChild("HumanoidRootPart")
 
+-- Mematikan sistem berenang bawaan Roblox saat pertama load
+local humInit = char:FindFirstChildOfClass("Humanoid")
+if humInit then
+    humInit:SetStateEnabled(Enum.HumanoidStateType.Swimming, false)
+end
+
 local CONFIG_FILE = "AutoMiner_SavedOres.json"
 local selectedOres = {} 
 local knownUIOres = {}
@@ -134,6 +140,11 @@ end
 player.CharacterAdded:Connect(function(c)
     char = c
     hrp = char:WaitForChild("HumanoidRootPart")
+    
+    -- Mematikan sistem berenang saat respawn
+    local hum = char:WaitForChild("Humanoid")
+    hum:SetStateEnabled(Enum.HumanoidStateType.Swimming, false)
+    
     clearPhysicsLock()
 end)
 
@@ -283,6 +294,9 @@ local function autoMineLoop()
             local hum = char:FindFirstChildWhichIsA("Humanoid")
             if not hum or hum.Health <= 0 then return end
 
+            -- Pastikan state berenang selalu mati saat mulai jalan
+            hum:SetStateEnabled(Enum.HumanoidStateType.Swimming, false)
+
             local ore = findNearestAllowedOre()
             if not ore then 
                 clearPhysicsLock()
@@ -315,6 +329,11 @@ local function autoMineLoop()
             while mining and currentHP and currentHP > 0 and ore.Parent do
                 -- Segera batalkan pukulan jika mati di tengah jalan
                 if not char or not hrp or not hrp.Parent or hum.Health <= 0 then break end
+
+                -- ANTI-DRIFT BAWAH AIR: Paksa posisi karakter jika menjauh dari titik target (terdorong air/lainnya)
+                if (hrp.Position - targetPos).Magnitude > 2 then
+                    hrp.CFrame = CFrame.new(targetPos)
+                end
 
                 callToolHit(tool)
                 task.wait(SWING_DELAY)
