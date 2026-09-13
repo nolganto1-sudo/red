@@ -1,6 +1,6 @@
 -- ==========================================
--- Universal Auto Hub v4.2 (Miner + Gate Joiner)
--- Very Safe Tween Speed & 30s Smart Auto-Reset
+-- Universal Auto Hub v4.3 (Miner + Gate Joiner)
+-- Fixed Gate Teleport Speed (No Rubberband) & Smart Auto-Reset
 -- ==========================================
 
 local Players = game:GetService("Players")
@@ -61,7 +61,7 @@ titleLabel.BackgroundColor3 = Color3.fromRGB(15, 15, 15)
 titleLabel.TextColor3 = Color3.fromRGB(0, 170, 255)
 titleLabel.Font = Enum.Font.GothamBold
 titleLabel.TextSize = 14
-titleLabel.Text = "⚙️ Universal Auto Hub"
+titleLabel.Text = "⚙️ Universal Auto Hub v4.3"
 titleLabel.Parent = mainFrame
 
 local btnMine = Instance.new("TextButton")
@@ -143,17 +143,25 @@ end
 local function safeTeleportGate(targetCFrame)
     if not isAlive() then return end
     isJoiningGate = true
+    clearPhysicsLock()
     
-    local tweenTime = 2.8
+    -- PERBAIKAN: Waktu tween diperlambat agar tidak keno anti-cheat/TP balik (2.8s -> 6.0s)
+    local tweenTime = 6.0 
     local liftHeight = 60
     
-    local upTween = TweenService:Create(hrp, TweenInfo.new(tweenTime, Enum.EasingStyle.Sine, Enum.EasingDirection.Out), {CFrame = hrp.CFrame + Vector3.new(0, liftHeight, 0)})
+    -- ⬆️ Naik dulu ke atas pulau
+    local upTween = TweenService:Create(hrp, TweenInfo.new(tweenTime, Enum.EasingStyle.Sine, Enum.EasingDirection.Out), {
+        CFrame = hrp.CFrame + Vector3.new(0, liftHeight, 0)
+    })
     upTween:Play()
     upTween.Completed:Wait()
     
     if not isAlive() then isJoiningGate = false return end
     
-    local downTween = TweenService:Create(hrp, TweenInfo.new(tweenTime, Enum.EasingStyle.Sine, Enum.EasingDirection.Out), {CFrame = targetCFrame + Vector3.new(0, 5, 0)})
+    -- ⬇️ Lalu turun ke Gate posisi
+    local downTween = TweenService:Create(hrp, TweenInfo.new(tweenTime, Enum.EasingStyle.Sine, Enum.EasingDirection.Out), {
+        CFrame = targetCFrame + Vector3.new(0, 5, 0)
+    })
     downTween:Play()
     downTween.Completed:Wait()
 
@@ -280,20 +288,20 @@ local function autoMineLoop()
                 
                 local best = findBestOre()
                 
-                -- LOGIKA RESET KETIKA ORE HABIS (SMART 30 DETIK)
+                -- LOGIKA RESET SMART 30 DETIK KETIKA ORE HABIS
                 if not best then
                     clearPhysicsLock()
                     
-                    -- Tunggu maksimal 30 detik (30 kali iterasi per 1 detik)
+                    -- Tunggu maksimal 30 detik
                     for i = 1, 30 do
                         task.wait(1)
-                        -- Jika mining dimatikan, sedang masuk gate, ada ore baru, atau karakter mati -> batalkan hitung mundur reset
+                        -- Jika AutoMine dimatikan, sedang terbang ke gate, ada ore baru, atau karakter mati -> batalkan reset
                         if not config.Toggles.AutoMine or isJoiningGate or findBestOre() or not isAlive() then
-                            return -- Keluar dari pengecekan reset dan kembali ke loop utama
+                            return
                         end
                     end
                     
-                    -- Jika setelah 30 detik masih kosong, bunuh diri (reset karakter)
+                    -- Jika setelah 30 detik tetap kosong, reset karakter
                     local hum = char:FindFirstChildWhichIsA("Humanoid")
                     if hum then
                         hum.Health = 0 
@@ -307,9 +315,8 @@ local function autoMineLoop()
                 
                 applyPhysicsLock()
                 
-                -- PERBAIKAN KECEPATAN TWEEN: Diturunkan drastis agar tidak rubberband
                 local distance = (hrp.Position - targetPos).Magnitude
-                local SPEED = 35 -- Kecepatan lebih lambat (sebelumnya 75)
+                local SPEED = 60 -- Kecepatan normal untuk mining
                 local tTime = math.max(distance / SPEED, 0.1) 
                 
                 local tween = TweenService:Create(hrp, TweenInfo.new(tTime, Enum.EasingStyle.Linear), {CFrame = CFrame.new(targetPos)})
