@@ -1,5 +1,4 @@
-
--- Robust Auto-Miner v3.4 (Auto-Resume on Respawn, Fixed Underwater, Auto Skill)
+-- Robust Auto-Miner v3.4 (Auto-Resume on Respawn, FIXED UNDERWATER ANCHOR)
 local Players = game:GetService("Players")
 local TweenService = game:GetService("TweenService")
 local UserInputService = game:GetService("UserInputService")
@@ -19,7 +18,7 @@ local autoSkillV = false
 local char = player.Character or player.CharacterAdded:Wait()
 local hrp = char:WaitForChild("HumanoidRootPart")
 
--- [PERBAIKAN 1]: Matikan sistem berenang saat pertama kali script dijalankan
+-- Mematikan sistem berenang bawaan
 local humInit = char:FindFirstChildOfClass("Humanoid")
 if humInit then
     humInit:SetStateEnabled(Enum.HumanoidStateType.Swimming, false)
@@ -129,8 +128,12 @@ end)
 
 local function clearPhysicsLock()
     if hrp and hrp.Parent then
+        -- Lepas jangkar saat tidak mining
+        hrp.Anchored = false 
+        
+        -- Hapus BodyVelocity lama jika masih ada tersisa
         for _, v in ipairs(hrp:GetChildren()) do
-            if v:IsA("BodyVelocity") and v.Name == "MinerFreeze" then
+            if v:IsA("BodyVelocity") then
                 v:Destroy()
             end
         end
@@ -142,7 +145,6 @@ player.CharacterAdded:Connect(function(c)
     char = c
     hrp = char:WaitForChild("HumanoidRootPart")
     
-    -- [PERBAIKAN 1 Lanjutan]: Matikan juga saat karakter respawn/hidup kembali
     local hum = char:WaitForChild("Humanoid", 5)
     if hum then
         hum:SetStateEnabled(Enum.HumanoidStateType.Swimming, false)
@@ -277,7 +279,6 @@ end
 task.spawn(function()
     while task.wait(1.5) do
         local hum = char and char:FindFirstChildWhichIsA("Humanoid")
-        -- Pastikan skill tidak tertekan saat mati
         if mining and autoSkillV and hum and hum.Health > 0 then
             pcall(function()
                 VirtualInputManager:SendKeyEvent(true, Enum.KeyCode.V, false, game)
@@ -290,12 +291,12 @@ end)
 
 local function autoMineLoop()
     while mining do
-        -- Gunakan pcall agar error karena karakter mati tidak menghentikan loop
         local success, err = pcall(function()
-            -- Cek apakah karakter hidup dan utuh
             if not char or not char.Parent or not hrp or not hrp.Parent then return end
             local hum = char:FindFirstChildWhichIsA("Humanoid")
             if not hum or hum.Health <= 0 then return end
+
+            hum:SetStateEnabled(Enum.HumanoidStateType.Swimming, false)
 
             local ore = findNearestAllowedOre()
             if not ore then 
@@ -311,12 +312,11 @@ local function autoMineLoop()
             local tTime = math.clamp(dist / SPEED, 0.1, 1)
             
             clearPhysicsLock()
-            local bg = Instance.new("BodyVelocity")
-            bg.Name = "MinerFreeze"
-            bg.MaxForce = Vector3.new(math.huge, math.huge, math.huge)
-            bg.Velocity = Vector3.zero
-            bg.Parent = hrp
             
+            -- [PERBAIKAN UTAMA]: Anchor HumanoidRootPart agar kebal daya apung air
+            hrp.Anchored = true 
+            
+            -- TweenService bisa menggerakkan part yang di-Anchor dengan sangat mulus
             local tween = TweenService:Create(hrp, TweenInfo.new(tTime, Enum.EasingStyle.Linear), {CFrame = CFrame.new(targetPos)})
             tween:Play()
             tween.Completed:Wait()
@@ -327,13 +327,10 @@ local function autoMineLoop()
             local lastTime = tick()
 
             while mining and currentHP and currentHP > 0 and ore.Parent do
-                -- Segera batalkan pukulan jika mati di tengah jalan
                 if not char or not hrp or not hrp.Parent or hum.Health <= 0 then break end
 
-                -- [PERBAIKAN 2]: Paksa kunci posisi. Jika terdorong air/mengapung sejauh 1.5 stud, teleport balik ke depan ore.
-                if (hrp.Position - targetPos).Magnitude > 1.5 then
-                    hrp.CFrame = CFrame.new(targetPos)
-                end
+                -- Pastikan tetap tertancap/anchored selama menambang
+                hrp.Anchored = true 
 
                 callToolHit(tool)
                 task.wait(SWING_DELAY)
@@ -352,10 +349,9 @@ local function autoMineLoop()
             clearPhysicsLock()
         end)
 
-        -- Jika ada error (biasanya karena mati mendadak saat tween), bersihkan dan jeda
         if not success then
             clearPhysicsLock()
-            task.wait(1.5) -- Jeda lebih lama sedikit menunggu respawn beres
+            task.wait(1.5) 
         end
         
         task.wait(0.1)
