@@ -1,8 +1,7 @@
 -- LocalScript (StarterPlayerScripts)
--- Auto Collect Chests (FIXED: Anti-Cheat Bypass, Safe Tween, No Rubberband)
+-- Auto Collect Chests (CFrame Lerp Bypass, High Speed, Anti-Kick)
 
 local Players = game:GetService("Players")
-local TweenService = game:GetService("TweenService")
 local RunService = game:GetService("RunService")
 local UserInputService = game:GetService("UserInputService")
 
@@ -18,8 +17,8 @@ player.CharacterAdded:Connect(function(c)
 end)
 
 -- Config
--- JANGAN lewati angka 175. Sebagian besar game mensetting batas wajar pergerakan di angka 150-175 studs/detik.
-local tweenSpeed = 150 
+-- Kecepatan ditingkatkan menjadi 275. Jika masih terdeteksi di game ini, turunkan perlahan ke 225 atau 200.
+local tweenSpeed = 275 
 local scanInterval = 1.0 
 local recentCooldown = 3.5 
 local maxRetryPerPrompt = 3 
@@ -273,45 +272,59 @@ local function triggerPrompt(prompt)
     end
 end
 
--- PERBAIKAN TWEEN: Bypass Anti-Cheat & Stabil
+-- PERBAIKAN UTAMA: CFrame Lerping Bypass 
+-- (Menggantikan TweenService yang mudah terdeteksi)
 local function moveTo(pos)
     if not pos or not hrp or not humanoid then return false end
 
     local distance = (hrp.Position - pos).Magnitude
-    local time = math.clamp(distance / tweenSpeed, 0.05, 15)
+    local timeToReach = math.clamp(distance / tweenSpeed, 0.05, 15)
     
-    -- Gunakan BodyVelocity hanya untuk melayang secara natural
+    local startCFrame = hrp.CFrame
+    local targetCFrame = CFrame.new(pos + Vector3.new(0, 2.5, 0)) 
+    
+    -- Anti-Gravitasi murni tanpa mengunci CFrame secara paksa
     local bv = Instance.new("BodyVelocity")
     bv.Velocity = Vector3.zero
-    bv.MaxForce = Vector3.new(100000, 100000, 100000) -- Cukup untuk melawan gravitasi tanpa over-physics
+    bv.MaxForce = Vector3.new(9e9, 9e9, 9e9)
     bv.Parent = hrp
     
-    -- Dihapus: PlatformStand = true (Memicu deteksi FlyHack)
-    -- Dihapus: Reset Hrp.Velocity loop (Memicu deteksi Teleport)
-
-    local targetCFrame = CFrame.new(pos + Vector3.new(0, 2.5, 0)) 
-    local tweenInfo = TweenInfo.new(time, Enum.EasingStyle.Linear)
-    local tween = TweenService:Create(hrp, tweenInfo, {CFrame = targetCFrame})
+    local startTime = tick()
+    local reached = false
+    local connection
     
-    local tweenFinished = false
-    local connection = tween.Completed:Connect(function() tweenFinished = true end)
+    -- Loop presisi tinggi setiap frame
+    connection = RunService.Heartbeat:Connect(function()
+        if not hrp or not hrp.Parent then
+            reached = true
+            connection:Disconnect()
+            return
+        end
+        
+        local elapsed = tick() - startTime
+        local alpha = math.clamp(elapsed / timeToReach, 0, 1)
+        
+        -- Interpolasi manual: Menggerakkan karakter tanpa memicu State fisika "Moving"
+        hrp.CFrame = startCFrame:Lerp(targetCFrame, alpha)
+        hrp.Velocity = Vector3.zero
+        hrp.RotVelocity = Vector3.zero
+        
+        if alpha >= 1 then
+            reached = true
+            connection:Disconnect()
+        end
+    end)
     
-    tween:Play()
-    
-    local elapsed = 0
-    while not tweenFinished and elapsed < (time + 1.0) do
+    local timeout = 0
+    while not reached and timeout < (timeToReach + 1.0) do
         task.wait(0.1)
-        elapsed += 0.1
-        if not hrp or not hrp.Parent or humanoid.Health <= 0 then break end 
+        timeout += 0.1
     end
     
     if connection then connection:Disconnect() end
-    pcall(function() tween:Cancel() end)
-    
-    -- Hapus efek melayang
     if bv then bv:Destroy() end
     
-    task.wait(0.15) 
+    task.wait(0.1) 
     return true
 end
 
