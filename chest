@@ -18,7 +18,7 @@ end)
 
 -- Config
 -- Kecepatan ditingkatkan menjadi 275. Jika masih terdeteksi di game ini, turunkan perlahan ke 225 atau 200.
-local tweenSpeed = 260
+local tweenSpeed = 245
 local scanInterval = 1.0 
 local recentCooldown = 3.5 
 local maxRetryPerPrompt = 3 
